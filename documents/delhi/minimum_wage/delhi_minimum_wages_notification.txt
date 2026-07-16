@@ -1,0 +1,105 @@
+SOURCE_URL: https://www.indiacode.nic.in/handle/123456789/13698?view_type=browse
+LAW_NAME: Delhi Minimum Wages Notification
+JURISDICTION: Delhi
+TOPIC: minimum_wage
+AGENCY: Delhi Labour Department
+SCRAPED_CHARS: 2685
+---CONTENT_START---
+The Minimum Wages Act, 1948 with Delhi Amendment
+RulesRegulationsNotificationsOrdersCircularsOrdinanceStatutes
+
+Sections
+Schedule
+Annexure
+Appendix
+Forms
+Actdetails
+
+[TABLE]
+Act ID: | 194811
+Act Number: | 11
+Enactment Date: | 1948-03-15
+Act Year: | 1948
+Short Title: | The Minimum Wages Act, 1948 with Delhi Amendment
+Long Title: | An Act to provide for fixing minimum rates of wages in certain employments.
+Department: | Labour Department
+Type: | CENTRAL ACT (Ministry of Labour and Employment, )
+Location: | Delhi
+Ref Act ID: | 194811[/TABLE]
+
+Show102550100entries
+Search:
+
+[TABLE]
+
+------------------------------------------------------------
+Schedule 1. THE SCHEDULE. Order Appendix Forms[/TABLE]
+
+Showing 1 to 1 of 1 entries
+PreviousNext
+
+Show102550100entries
+Search:
+
+[TABLE]
+Title | Files
+------------------------------------------------------------
+No data available in table[/TABLE]
+
+Showing 0 to 0 of 0 entries
+PreviousNext
+
+Show102550100entries
+Search:
+
+[TABLE]
+Title | Files
+------------------------------------------------------------
+No data available in table[/TABLE]
+
+Showing 0 to 0 of 0 entries
+PreviousNext
+
+Show102550100entries
+Search:
+
+[TABLE]
+Title | Files
+------------------------------------------------------------
+No data available in table[/TABLE]
+
+Showing 0 to 0 of 0 entries
+PreviousNext
+
+The Minimum Wages Act, 1948 with Delhi Amendment
+
+Show102550100entries
+Search:
+
+[TABLE]
+
+------------------------------------------------------------
+Section 1. Short title and extent. (1) This Act may be called the Minimum Wages Act, 1948. (2) It extends to the whole of India 2 ***. 1. The words "except the State of Jammu and Kashmir" omitted by Act 51 of 1970, s. 2 and the Schedule (w.e.f. 1-9-1971).
+Section 2. Interpretation.
+Section 3. Fixing of minimum rates of wages.
+Section 4. Minimum rate of wages.
+Section 5. Procedure for fixing and revising minimum wages.
+Section 6. [Omitted.].
+Section 7. Advisory Board.
+Section 8. Central Advisory Board.
+Section 9. Composition of committees, etc.
+Section 10. Correction of errors.[/TABLE]
+
+Showing 1 to 10 of 38 entries
+PreviousNext
+
+[TABLE]
+
+------------------------------------------------------------
+Schedule 1. THE SCHEDULE. Order Appendix Forms[/TABLE]
+
+<p class="submitFormHelp alert alert-info">
+ <b>Disclaimer:</b> Updation and uploading of all Acts enacted; Rules, Regulations, Notifications, etc., issued, by States/Union territories available on this web page is the proprietary of respective State Governments and Union territory Administrations.Respective State Government or Union territory Administration is solely responsible for the correctness of contents uploaded on this web page.
+ </p>
+
+</div>

@@ -1,0 +1,36 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.example
+
+# Database
+*.db
+*.sqlite
+
+# Scrapy
+.scrapy/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# Model cache (large files)
+.cache/
+models/
+
+# Logs
+logs/
+*.log

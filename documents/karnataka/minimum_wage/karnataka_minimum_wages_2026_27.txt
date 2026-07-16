@@ -1,0 +1,90 @@
+SOURCE_URL: https://karmikaspandana.karnataka.gov.in/64/minimum-wages-rates-for-the-year-2026-27/en
+LAW_NAME: Karnataka Minimum Wages Notification 2026-27
+JURISDICTION: Karnataka
+TOPIC: minimum_wage
+AGENCY: Karnataka Labour Department
+SCRAPED_CHARS: 4895
+---CONTENT_START---
+[TABLE]
+S N | Subject | Documents View
+1 | Employment in Agriculture and Related work | View
+2 | Employment in Soft Drink including Aerated Water, Minaral Water | View
+3 | Employment in Manufacturing of Agarabatti and incense product | View
+4 | Employment in Arecanut (Supari) Industries | View
+5 | Employment in Automobile Engineering (including Manufacturing) | View
+6 | Employment in Bakery Industry and Baking Processes | View
+7 | Employment in Beedi Manufacturing Processed | View
+8 | Employment in Tobacco Processing Industries | View
+9 | Employment in Biscuit Manufacturing Establishment | View
+10 | Employment in Manufacture of Aluminium, Brass, Copper, Hinda | View
+11 | Employment in Brick Making and Pre-Stressed Products Manufacature | View
+12 | Employment in Carpentry Industry and Saw Mill Establishments | View
+13 | Employment in Plywood Manufacturing Establishments | View
+14 | Employment in wood Timber Depots | View
+15 | Employment in Veneer Industries | View
+16 | Employment in Cardamom Malaise and Cardmom Gardens | View
+17 | Employment in Cashew processing Establishments | View
+18 | Employment in Clay Pottery, Ceramics, Stoneware | View
+19 | Employment in Cincona rubber | View
+20 | Employment in Cichona Rubber, Tea and or Coffee | View
+21 | Employment in Chemical Fertilizer, Pesticides and Pesticides | View
+22 | Employment in Clubs | View
+23 | Employment in Coffee Curing Establishments | View
+24 | Employment inConfectionary Enterprises | View
+25 | Employment in Cotton Ginning Pressing and Allied Processes | View
+26 | Employment in Building and Other Construction Works | View
+27 | Employment in Residential Houses including Domestic helpers | View
+28 | Employment in Electronics Industries | View
+29 | Employment iin Electronics and Electroplating enterprises | View
+30 | Employment not covered under any scheduled employments | View
+31 | Employment in general Engineering Fabrication and allied | View
+32 | Employment in Motion Picture( Film Short Film Cinema) | View
+33 | Employment in Fish Catching Fish Processing Fish Peeling | View
+34 | Employment in Food Processing Packing of food products | View
+35 | Employment in Forestry and Timbering Industry | View
+36 | Employment in Foundry (With or Without Mechine Shop) | View
+37 | Employment in Glass Glassware and allied establishments | View
+38 | Employment in Granite stones and Marble enterprises | View
+39 | Employment in Handloom and Powerlooms(Cotton) | View
+40 | Employment in Hospitals, Maternity Homes, Nursing omes, Clinics and De-Addiction Centres | View
+41 | Employment in hostels | View
+42 | Employment in Hotels Residential Hotels Restaurants | View
+43 | Employment in Ice Factory and cold ice creams | View
+44 | Employment in Khandasari Sugar Industries | View
+45 | Employment in Washing of clothes Dry Cleaning | View
+46 | Employment in Manufacture of Liquor | View
+47 | Employment in Ayurveda Yoga unani Sidda | View
+48 | Employment in Mandakki Bhatti | View
+49 | Employment in Metal Rolling and Re Rolling | View
+50 | Employment in Metal Rolling and Re Rolling (Non Ferrous) | View
+51 | Employment in Mini Cement plant Establishment | View
+52 | Employment in Mosaic tiles flooring tiles or glazing | View
+53 | Employment in Oil Mills | View
+54 | Employment in Petrol and Diesel Oil and LPG Pumps | View
+55 | Employment in Plastic Pipes | View
+56 | Employment in Printing and publishing Industry | View
+57 | Employment in Private Finance Corpooration & Chit Fund | View
+58 | Employment in Cleaning Scavenging of Bathrooms Toilets | View
+59 | Employment in Establishments Engaged in Milk Procurement | View
+60 | Employment in public Motor Transport Establishments | View
+61 | Employment in Pulp paper | View
+62 | Employment in Rice mills Dal Mills and or ther Grain Mills | View
+63 | Employment in Rubber Product including Foam Coir | View
+64 | Employment in Sales promotion of Medicine, consumer items | View
+65 | Employment in Security Agency (Industries and Est) | View
+66 | Employment in Sericulture Units and Processes Part-1 | View
+67 | Employment in Sericulture Units and Processes Part-2 | View
+68 | Employment in Shops and Commercial Establishments | View
+69 | Employment in Spinning Mills Industry | View
+70 | Employment in Spun Pipes Concrete Pipes Sanitary Fittings | View
+71 | Employment in Metal Almirahs Tables Chairs and other | View
+72 | Employment in Stone Breaking and stone crushing | View
+73 | Employment in Tailoring Industry | View
+74 | Employment in Silk Textile Industry | View
+75 | Employment in Tile Manufacturing Industry | View
+76 | Employment in Toddy Tapping Processes | View
+77 | Employment in Urban Local Bodies and PRIs | View
+78 | Employment in Co operative societies | View
+79 | Employment in CRYSTAL CUTTING, POLISHING AND ORNAMENT MANUFACTURE | View
+80 | Employment in CLOTH DYEING AND PRINTING | View
+81 | Employment in Loading and Unloading | View[/TABLE]

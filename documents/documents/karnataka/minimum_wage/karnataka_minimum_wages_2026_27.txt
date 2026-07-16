@@ -1,0 +1,35 @@
+SOURCE_URL: https://karmikaspandana.karnataka.gov.in/64/minimum-wages-rates-for-the-year-2026-27/en
+LAW_NAME: Karnataka Minimum Wages Notification 2026-27
+JURISDICTION: Karnataka
+TOPIC: minimum_wage
+AGENCY: Karnataka Labour Department
+---CONTENT_START---
+The website complies with World Wide Web Consortium (W3C) Web Content Accessibility Guidelines (WCAG) 2.0 level AA. This will enable people with visual impairments access the website using assistive technologies, such as screen readers. The information of the website is accessible with different screen readers, such as JAWS, NVDA, SAFA, Supernova and Window-Eyes.
+Following table lists the information about different screen readers:
+Sl. No.
+Screen Reader
+Website
+Free/ Commercial
+Non Visual Desktop Access (NVDA)
+http://www.nvda-project.org/
+(External website that opens in a new window)
+Free
+JAWS
+http://www.freedomscientific.com
+(External website that opens in a new window)
+Commercial
+Window-Eyes
+http://www.gwmicro.com
+(External website that opens in a new window)
+Commercial
+System Access To Go
+http://www.satogo.com/
+(External website that opens in a new window)
+Free
+WebAnywhere
+http://webinsight.cs.washington.edu/
+(External website that opens in a new window)
+Free
+atoall
+(External website that opens in a new window)
+Free
