@@ -6,7 +6,7 @@ import httpx
 from frontend.components.sources import render_sources
 from shared.constants import JURISDICTIONS, TOPICS
 
-API_URL = "http://localhost:8000/api"
+from frontend.config import API_URL
 
 
 def render_comparison():

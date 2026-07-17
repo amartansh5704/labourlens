@@ -4,7 +4,7 @@
 import streamlit as st
 import httpx
 
-API_URL = "http://localhost:8000/api"
+from frontend.config import API_URL
 
 
 def render_stats():
