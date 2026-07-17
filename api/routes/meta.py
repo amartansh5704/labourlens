@@ -1,9 +1,14 @@
 # api/routes/meta.py
 # Utility endpoints - health check, stats, jurisdictions etc
 
+import os
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from database.connection import get_db, check_db_connection, get_db_stats
+from database.connection import (
+    get_db,
+    check_db_connection,
+    get_db_stats
+)
 from api.schemas.response import HealthResponse, StatsResponse
 from api.core.config import settings
 from shared.constants import JURISDICTIONS, TOPICS
@@ -11,6 +16,27 @@ from loguru import logger
 from qdrant_client import QdrantClient
 
 router = APIRouter()
+
+
+def get_qdrant_client() -> QdrantClient:
+    """
+    Returns correct Qdrant client
+    Works for both local Docker and Qdrant Cloud
+    """
+    api_key = os.getenv("QDRANT_API_KEY", "")
+    host = os.getenv("QDRANT_HOST", "localhost")
+    port = int(os.getenv("QDRANT_PORT", 6333))
+
+    if api_key and "cloud.qdrant.io" in host:
+        return QdrantClient(
+            url=f"https://{host}",
+            api_key=api_key,
+        )
+    else:
+        return QdrantClient(
+            host=host,
+            port=port
+        )
 
 
 # ─────────────────────────────────────────────────────────
@@ -36,12 +62,9 @@ def health_check():
     # check database
     db_status = "ok" if check_db_connection() else "error"
 
-    # check Qdrant
+    # check Qdrant - handles both local and cloud
     try:
-        client = QdrantClient(
-            host=settings.QDRANT_HOST,
-            port=settings.QDRANT_PORT
-        )
+        client = get_qdrant_client()
         client.get_collections()
         qdrant_status = "ok"
     except Exception as e:
@@ -62,9 +85,13 @@ def health_check():
         logger.warning(f"Groq health check failed: {e}")
         groq_status = "error"
 
+    # overall status
     overall = (
         "ok"
-        if all(s == "ok" for s in [db_status, qdrant_status, groq_status])
+        if all(
+            s == "ok"
+            for s in [db_status, qdrant_status, groq_status]
+        )
         else "degraded"
     )
 
@@ -137,16 +164,15 @@ def get_stats():
     db_stats = get_db_stats()
 
     # get Qdrant vector count
+    # handles both local and cloud
     try:
-        client = QdrantClient(
-            host=settings.QDRANT_HOST,
-            port=settings.QDRANT_PORT
-        )
+        client = get_qdrant_client()
         qdrant_count = client.count(
             collection_name=settings.QDRANT_COLLECTION,
             exact=True
         ).count
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Qdrant count failed: {e}")
         qdrant_count = 0
 
     return StatsResponse(

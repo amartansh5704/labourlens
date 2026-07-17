@@ -1,6 +1,6 @@
 # fix_qdrant.py
 # Clears old test data and re-seeds with correct metadata
-# Run this once to fix the Qdrant state
+# Works with both local Docker and Qdrant Cloud
 
 import os
 import sys
@@ -16,31 +16,61 @@ from scraper.indexer.qdrant_indexer import QdrantIndexer
 from loguru import logger
 
 COLLECTION = os.getenv("QDRANT_COLLECTION", "employment_law_india")
-HOST = os.getenv("QDRANT_HOST", "localhost")
-PORT = int(os.getenv("QDRANT_PORT", 6333))
+HOST       = os.getenv("QDRANT_HOST", "localhost")
+PORT       = int(os.getenv("QDRANT_PORT", 6333))
+API_KEY    = os.getenv("QDRANT_API_KEY", "")
 
 print("=" * 55)
 print("Qdrant Cleanup and Re-seed")
 print("=" * 55)
+print(f"Host:       {HOST}")
+print(f"API Key:    {'SET' if API_KEY else 'NOT SET'}")
+print(f"Collection: {COLLECTION}")
+print()
 
 # ── Step 1: Connect ────────────────────────────────────
-print("\n[1] Connecting to Qdrant...")
+print("[1] Connecting to Qdrant...")
 try:
-    client = QdrantClient(host=HOST, port=PORT)
+    # use cloud connection if API key is set
+    if API_KEY and "cloud.qdrant.io" in HOST:
+        client = QdrantClient(
+            url=f"https://{HOST}",
+            api_key=API_KEY,
+            timeout=30,
+            check_compatibility=False,
+        )
+        print(f"    Using Qdrant Cloud: https://{HOST}")
+    else:
+        client = QdrantClient(
+            host=HOST,
+            port=PORT,
+            timeout=30,
+        )
+        print(f"    Using local Qdrant: {HOST}:{PORT}")
+
+    # test connection
     collections = client.get_collections()
-    print(f"    ✅ Connected to Qdrant at {HOST}:{PORT}")
+    existing_names = [c.name for c in collections.collections]
+    print(f"    ✅ Connected successfully")
+    print(f"    Existing collections: {existing_names}")
+
 except Exception as e:
     print(f"    ❌ Cannot connect to Qdrant: {e}")
-    print("    Run: docker compose up -d qdrant")
+    print()
+    print("    Check your .env file:")
+    print("    QDRANT_HOST=xxxx.eu-central-1.aws.cloud.qdrant.io")
+    print("    QDRANT_API_KEY=your-api-key")
+    print()
+    print("    Or for local Docker:")
+    print("    docker compose up -d qdrant")
     sys.exit(1)
 
 # ── Step 2: Delete existing collection ────────────────
 print(f"\n[2] Deleting collection: {COLLECTION}")
 try:
-    existing = [c.name for c in client.get_collections().collections]
-    if COLLECTION in existing:
+    if COLLECTION in existing_names:
         client.delete_collection(COLLECTION)
-        print(f"    ✅ Deleted collection: {COLLECTION}")
+        print(f"    ✅ Deleted: {COLLECTION}")
     else:
         print(f"    ℹ️  Collection did not exist yet")
 except Exception as e:
@@ -99,27 +129,6 @@ test_chunks = [
     },
     {
         "chunk_id": "seed-002",
-        "document_id": "doc-delhi-002",
-        "text": (
-            "Semi-skilled workers in Delhi are entitled to "
-            "minimum wages of Rs. 19,279 per month. Skilled "
-            "workers shall receive Rs. 21,215 per month. "
-            "These rates are revised twice yearly in April "
-            "and October by the Delhi Labour Department."
-        ),
-        "chunk_index": 1,
-        "jurisdiction": "Delhi",
-        "topic": "minimum_wage",
-        "law_name": "Delhi Minimum Wages Notification 2023",
-        "document_type": "notification",
-        "agency": "Delhi Labour Department",
-        "source_url": "https://labour.delhi.gov.in/minimum-wages",
-        "title": "Delhi Minimum Wages 2023",
-        "effective_date": "October 2023",
-        "file_type": "html",
-    },
-    {
-        "chunk_id": "seed-003",
         "document_id": "doc-central-001",
         "text": (
             "No adult worker shall be required or allowed "
@@ -141,7 +150,7 @@ test_chunks = [
         "file_type": "html",
     },
     {
-        "chunk_id": "seed-004",
+        "chunk_id": "seed-003",
         "document_id": "doc-central-002",
         "text": (
             "Every employer shall contribute to the "
@@ -163,7 +172,7 @@ test_chunks = [
         "file_type": "html",
     },
     {
-        "chunk_id": "seed-005",
+        "chunk_id": "seed-004",
         "document_id": "doc-maharashtra-001",
         "text": (
             "Every worker who has completed one year of "
@@ -185,7 +194,7 @@ test_chunks = [
         "file_type": "html",
     },
     {
-        "chunk_id": "seed-006",
+        "chunk_id": "seed-005",
         "document_id": "doc-central-003",
         "text": (
             "Contract workers engaged through a contractor "
@@ -207,50 +216,6 @@ test_chunks = [
         "effective_date": "1970",
         "file_type": "html",
     },
-    {
-        "chunk_id": "seed-007",
-        "document_id": "doc-karnataka-001",
-        "text": (
-            "The minimum wages for workers in Karnataka "
-            "for the year 2024 have been revised upward. "
-            "Unskilled workers shall receive Rs. 15,580 "
-            "per month. Semi-skilled workers shall receive "
-            "Rs. 16,848 per month as per the Karnataka "
-            "Minimum Wages notification dated January 2024."
-        ),
-        "chunk_index": 0,
-        "jurisdiction": "Karnataka",
-        "topic": "minimum_wage",
-        "law_name": "Karnataka Minimum Wages Notification 2024",
-        "document_type": "notification",
-        "agency": "Karnataka Labour Department",
-        "source_url": "https://labour.kar.nic.in/minimum-wages",
-        "title": "Karnataka Minimum Wages 2024",
-        "effective_date": "January 2024",
-        "file_type": "html",
-    },
-    {
-        "chunk_id": "seed-008",
-        "document_id": "doc-central-004",
-        "text": (
-            "The ESI contribution rate for employers is "
-            "3.25 percent of the wages paid to employees. "
-            "The employee contribution rate is 0.75 percent "
-            "of wages. Employees earning up to Rs. 21,000 "
-            "per month are covered under the Employees "
-            "State Insurance Act 1948."
-        ),
-        "chunk_index": 0,
-        "jurisdiction": "Central",
-        "topic": "epf_esi",
-        "law_name": "Employees State Insurance Act 1948",
-        "document_type": "statute",
-        "agency": "Employees State Insurance Corporation",
-        "source_url": "https://esic.gov.in/esi-act",
-        "title": "ESI Act 1948",
-        "effective_date": "1948",
-        "file_type": "html",
-    },
 ]
 
 try:
@@ -270,55 +235,27 @@ try:
     ).count
     print(f"    ✅ Total vectors in Qdrant: {total}")
 
-    # verify Delhi data exists
     from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-    delhi_count = client.count(
-        collection_name=COLLECTION,
-        count_filter=Filter(
-            must=[
-                FieldCondition(
-                    key="jurisdiction",
-                    match=MatchValue(value="Delhi")
-                )
-            ]
-        ),
-        exact=True
-    ).count
-    print(f"    ✅ Delhi vectors: {delhi_count}")
-
-    central_count = client.count(
-        collection_name=COLLECTION,
-        count_filter=Filter(
-            must=[
-                FieldCondition(
-                    key="jurisdiction",
-                    match=MatchValue(value="Central")
-                )
-            ]
-        ),
-        exact=True
-    ).count
-    print(f"    ✅ Central vectors: {central_count}")
-
-    maharashtra_count = client.count(
-        collection_name=COLLECTION,
-        count_filter=Filter(
-            must=[
-                FieldCondition(
-                    key="jurisdiction",
-                    match=MatchValue(value="Maharashtra")
-                )
-            ]
-        ),
-        exact=True
-    ).count
-    print(f"    ✅ Maharashtra vectors: {maharashtra_count}")
+    for jurisdiction in ["Delhi", "Central", "Maharashtra"]:
+        j_count = client.count(
+            collection_name=COLLECTION,
+            count_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="jurisdiction",
+                        match=MatchValue(value=jurisdiction)
+                    )
+                ]
+            ),
+            exact=True
+        ).count
+        print(f"    ✅ {jurisdiction} vectors: {j_count}")
 
 except Exception as e:
     print(f"    ❌ Verification failed: {e}")
 
 print("\n" + "=" * 55)
-print("✅ Qdrant ready with proper test data")
-print("Now run: python test_rag.py")
+print("✅ Qdrant ready with seed data")
+print("Now run: python scraper/ingest_documents.py")
 print("=" * 55)

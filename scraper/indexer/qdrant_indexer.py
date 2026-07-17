@@ -17,14 +17,29 @@ import os
 class QdrantIndexer:
     """
     Manages storing vectors in Qdrant.
-    Updated for newer qdrant-client API.
+    Works with both local Docker and Qdrant Cloud.
     """
 
     def __init__(self):
-        self.client = QdrantClient(
-            host=os.getenv("QDRANT_HOST", "localhost"),
-            port=int(os.getenv("QDRANT_PORT", 6333))
-        )
+        api_key = os.getenv("QDRANT_API_KEY", "")
+        host = os.getenv("QDRANT_HOST", "localhost")
+        port = int(os.getenv("QDRANT_PORT", 6333))
+
+        # cloud Qdrant needs API key and uses HTTPS
+        if api_key and "cloud.qdrant.io" in host:
+            self.client = QdrantClient(
+                url=f"https://{host}",
+                api_key=api_key,
+            )
+            logger.info(f"Connected to Qdrant Cloud: {host}")
+        else:
+            # local Qdrant (no API key needed)
+            self.client = QdrantClient(
+                host=host,
+                port=port
+            )
+            logger.info(f"Connected to local Qdrant: {host}:{port}")
+
         self.collection_name = os.getenv(
             "QDRANT_COLLECTION",
             "employment_law_india"
@@ -148,7 +163,9 @@ class QdrantIndexer:
         """Delete and recreate collection for fresh start"""
         try:
             self.client.delete_collection(self.collection_name)
-            logger.info(f"Deleted collection: {self.collection_name}")
+            logger.info(
+                f"Deleted collection: {self.collection_name}"
+            )
             self._ensure_collection_exists()
         except Exception as e:
             logger.error(f"Failed to delete collection: {e}")

@@ -1,6 +1,7 @@
 # api/rag/retriever.py
 # Searches Qdrant vector database for relevant law passages
 
+import os
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Filter,
@@ -25,11 +26,31 @@ class LegalRetriever:
     """
 
     def __init__(self):
-        self.client = QdrantClient(
-            host=settings.QDRANT_HOST,
-            port=settings.QDRANT_PORT
+        api_key = os.getenv("QDRANT_API_KEY", "")
+        host = os.getenv("QDRANT_HOST", "localhost")
+        port = int(os.getenv("QDRANT_PORT", 6333))
+
+        # cloud connection
+        if api_key and "cloud.qdrant.io" in host:
+            self.client = QdrantClient(
+                url=f"https://{host}",
+                api_key=api_key,
+            )
+            logger.info(f"Connected to Qdrant Cloud: {host}")
+        else:
+            # local connection
+            self.client = QdrantClient(
+                host=host,
+                port=port
+            )
+            logger.info(
+                f"Connected to local Qdrant: {host}:{port}"
+            )
+
+        self.collection_name = os.getenv(
+            "QDRANT_COLLECTION",
+            "employment_law_india"
         )
-        self.collection_name = settings.QDRANT_COLLECTION
 
         logger.info(
             f"Loading retriever model: {settings.EMBEDDING_MODEL}"
@@ -190,11 +211,15 @@ class LegalRetriever:
                 "jurisdiction": payload.get("jurisdiction", ""),
                 "topic": payload.get("topic", ""),
                 "law_name": payload.get("law_name", ""),
-                "document_type": payload.get("document_type", ""),
+                "document_type": payload.get(
+                    "document_type", ""
+                ),
                 "agency": payload.get("agency", ""),
                 "source_url": payload.get("source_url", ""),
                 "title": payload.get("title", ""),
-                "effective_date": payload.get("effective_date", ""),
+                "effective_date": payload.get(
+                    "effective_date", ""
+                ),
                 "file_type": payload.get("file_type", "html"),
                 "chunk_index": payload.get("chunk_index", 0),
             })
@@ -210,7 +235,9 @@ class LegalRetriever:
         Count how many chunks are in Qdrant.
         """
         try:
-            search_filter = self._build_filter(jurisdiction, topic)
+            search_filter = self._build_filter(
+                jurisdiction, topic
+            )
 
             result = self.client.count(
                 collection_name=self.collection_name,
