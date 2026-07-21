@@ -58,71 +58,68 @@ class LegalRetriever:
         self.model = SentenceTransformer(settings.EMBEDDING_MODEL)
         logger.info("Retriever ready")
 
-    def retrieve(
-        self,
-        question: str,
-        jurisdiction: Optional[str] = None,
-        topic: Optional[str] = None,
-        top_k: int = None,
-    ) -> List[Dict]:
-        """
-        Main retrieval function.
+    # api/rag/retriever.py
+# Update the retrieve() method to use RETRIEVAL_TOP_K
 
-        Args:
-            question:     user question in plain English
-            jurisdiction: filter eg "Delhi"
-            topic:        filter eg "minimum_wage"
-            top_k:        how many results to return
+def retrieve(
+    self,
+    question: str,
+    jurisdiction: Optional[str] = None,
+    topic: Optional[str] = None,
+    top_k: int = None,
+) -> List[Dict]:
+    """
+    Retrieves MORE candidates than needed.
+    Reranker will then pick the best ones.
 
-        Returns:
-            List of dicts with text and metadata
-            Sorted by relevance score highest first
-        """
+    top_k here = final results wanted
+    We actually fetch RETRIEVAL_TOP_K from Qdrant
+    """
 
-        top_k = top_k or settings.TOP_K_RESULTS
+    # final results wanted (for LLM)
+    final_top_k = top_k or settings.TOP_K_RESULTS
 
-        logger.info(
-            f"Retrieving for: '{question[:60]}' "
-            f"| jurisdiction={jurisdiction} "
-            f"| topic={topic} "
-            f"| top_k={top_k}"
+    # how many to fetch from Qdrant for reranking
+    # fetch more so reranker has candidates to work with
+    retrieval_top_k = max(
+        settings.RETRIEVAL_TOP_K,
+        final_top_k * 4  # always fetch at least 4x
+    )
+
+    logger.info(
+        f"Retrieving: '{question[:60]}' "
+        f"| jurisdiction={jurisdiction} "
+        f"| topic={topic} "
+        f"| fetching={retrieval_top_k} "
+        f"| returning={final_top_k}"
+    )
+
+    query_vector = self._embed_question(question)
+    search_filter = self._build_filter(jurisdiction, topic)
+
+    try:
+        results = self.client.query_points(
+            collection_name=self.collection_name,
+            query=query_vector,
+            query_filter=search_filter,
+            limit=retrieval_top_k,    # fetch more for reranker
+            with_payload=True,
+            score_threshold=settings.MIN_SCORE_THRESHOLD,
         )
+        raw_points = results.points
 
-        # step 1: embed the question
-        query_vector = self._embed_question(question)
+    except Exception as e:
+        logger.error(f"Qdrant search failed: {e}")
+        return []
 
-        # step 2: build metadata filter
-        search_filter = self._build_filter(jurisdiction, topic)
+    formatted = self._format_results(raw_points)
 
-        # step 3: search Qdrant
-        # newer qdrant-client uses query_points() not search()
-        try:
-            results = self.client.query_points(
-                collection_name=self.collection_name,
-                query=query_vector,
-                query_filter=search_filter,
-                limit=top_k,
-                with_payload=True,
-                score_threshold=settings.MIN_SCORE_THRESHOLD,
-            )
+    logger.info(
+        f"Qdrant returned {len(formatted)} candidates "
+        f"(will rerank to {final_top_k})"
+    )
 
-            # query_points returns a QueryResponse object
-            # the actual points are in results.points
-            raw_points = results.points
-
-        except Exception as e:
-            logger.error(f"Qdrant search failed: {e}")
-            return []
-
-        # step 4: format results
-        formatted = self._format_results(raw_points)
-
-        logger.info(
-            f"Retrieved {len(formatted)} results "
-            f"(threshold={settings.MIN_SCORE_THRESHOLD})"
-        )
-
-        return formatted
+    return formatted
 
     def retrieve_for_comparison(
         self,
