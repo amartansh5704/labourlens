@@ -3,15 +3,10 @@
 # Tier 1: Qdrant indexed documents
 # Tier 2: Web search (Tavily)
 # Tier 3: LLM general knowledge
-# ALL tiers contribute to every answer
+# ALL tiers contribute to EVERY answer
 
 from api.rag.retriever import LegalRetriever
 from api.rag.llm import GroqLLM
-from api.rag.prompts import (
-    build_context_string,
-    build_no_results_message,
-    SYSTEM_PROMPT,
-)
 from api.core.config import settings
 from shared.constants import DISCLAIMER
 from loguru import logger
@@ -23,18 +18,26 @@ try:
     WEB_SEARCH_AVAILABLE = True
 except Exception:
     WEB_SEARCH_AVAILABLE = False
+    logger.warning("WebSearcher not available")
 
 try:
     from api.rag.reranker import LegalReranker
     RERANKER_AVAILABLE = True
 except Exception:
     RERANKER_AVAILABLE = False
+    logger.warning("Reranker not available")
 
 
 class LegalRAGPipeline:
     """
     Combined pipeline that uses ALL available sources
     for every question to give the best possible answer.
+
+    Flow for EVERY question:
+    1. Search Qdrant for relevant indexed documents
+    2. Search web via Tavily for current information
+    3. Build ONE prompt with ALL gathered info
+    4. LLM uses docs + web + own knowledge to answer
     """
 
     def __init__(self):
@@ -45,27 +48,43 @@ class LegalRAGPipeline:
 
         # web search (optional)
         if WEB_SEARCH_AVAILABLE:
-            self.web_searcher = WebSearcher()
-            if self.web_searcher.enabled:
-                logger.info("Web search: ENABLED")
-            else:
-                logger.info("Web search: DISABLED (no key)")
+            try:
+                self.web_searcher = WebSearcher()
+                if self.web_searcher.enabled:
+                    logger.info("Web search: ENABLED")
+                else:
+                    logger.info(
+                        "Web search: DISABLED (no API key)"
+                    )
+            except Exception as e:
+                logger.warning(f"Web search init failed: {e}")
+                self.web_searcher = None
         else:
             self.web_searcher = None
             logger.info("Web search: NOT AVAILABLE")
 
         # reranker (optional)
-        if RERANKER_AVAILABLE and settings.ENABLE_RERANKER:
-            self.reranker = LegalReranker()
-            if self.reranker.enabled:
-                logger.info("Reranker: ENABLED")
-            else:
+        self.reranker = None
+        if RERANKER_AVAILABLE:
+            try:
+                enable = getattr(
+                    settings, "ENABLE_RERANKER", False
+                )
+                if enable:
+                    self.reranker = LegalReranker()
+                    if self.reranker.enabled:
+                        logger.info("Reranker: ENABLED")
+                    else:
+                        self.reranker = None
+            except Exception as e:
+                logger.warning(f"Reranker init failed: {e}")
                 self.reranker = None
-        else:
-            self.reranker = None
 
         logger.info("RAG Pipeline ready")
 
+    # ══════════════════════════════════════════════════
+    # MAIN RUN METHOD
+    # ══════════════════════════════════════════════════
     def run(
         self,
         question: str,
@@ -77,45 +96,50 @@ class LegalRAGPipeline:
         top_k = top_k or settings.TOP_K_RESULTS
         question = question.strip()
 
+        # validate
         if not question:
             return self._error_response(
                 "Question cannot be empty",
                 jurisdiction, topic
             )
 
-        if len(question) > settings.MAX_QUESTION_LENGTH:
+        max_len = getattr(
+            settings, "MAX_QUESTION_LENGTH", 500
+        )
+        if len(question) > max_len:
             return self._error_response(
-                f"Question too long.",
+                f"Question too long. Max {max_len} chars.",
                 jurisdiction, topic
             )
 
         logger.info(
-            f"Pipeline: '{question[:60]}' "
-            f"| {jurisdiction} | {topic}"
+            f"Pipeline START: '{question[:60]}' "
+            f"| jurisdiction={jurisdiction} "
+            f"| topic={topic}"
         )
 
-        # ══════════════════════════════════════════════
-        # GATHER ALL SOURCES
-        # ══════════════════════════════════════════════
-
-        # TIER 1: Qdrant indexed documents
+        # ── Step 1: Always search Qdrant ───────────────
         qdrant_sources = self._get_qdrant_sources(
             question=question,
             jurisdiction=jurisdiction,
             topic=topic,
             top_k=top_k,
         )
+        logger.info(
+            f"Qdrant results: {len(qdrant_sources)}"
+        )
 
-        # TIER 2: Web search
+        # ── Step 2: Always search web ──────────────────
         web_sources = self._get_web_sources(
             question=question,
             jurisdiction=jurisdiction,
             topic=topic,
         )
+        logger.info(
+            f"Web results: {len(web_sources)}"
+        )
 
-        # ══════════════════════════════════════════════
-        # BUILD COMBINED PROMPT
-        # ══════════════════════════════════════════════
+        # ── Step 3: Build combined prompt ──────────────
         prompt = self._build_combined_prompt(
             question=question,
             qdrant_sources=qdrant_sources,
@@ -124,21 +148,26 @@ class LegalRAGPipeline:
             topic=topic,
         )
 
-        # ══════════════════════════════════════════════
-        # GENERATE ANSWER (Tier 3 = LLM knowledge)
-        # ══════════════════════════════════════════════
+        logger.info(
+            f"Prompt built: {len(prompt)} chars | "
+            f"Qdrant={len(qdrant_sources)} "
+            f"Web={len(web_sources)}"
+        )
+
+        # ── Step 4: Generate answer ────────────────────
         try:
             answer = self.llm.generate(
                 prompt=prompt,
-                temperature=0.2
+                temperature=0.3
             )
+            logger.info("Answer generated successfully")
         except Exception as e:
             logger.error(f"LLM error: {e}")
             return self._error_response(
                 f"AI error: {e}", jurisdiction, topic
             )
 
-        # determine answer source
+        # ── Step 5: Determine source label ─────────────
         if qdrant_sources and web_sources:
             answer_source = "all_sources"
         elif qdrant_sources:
@@ -148,28 +177,32 @@ class LegalRAGPipeline:
         else:
             answer_source = "llm_knowledge"
 
-        # combine all sources for display
-        all_display_sources = qdrant_sources.copy()
+        # ── Step 6: Combine sources for display ────────
+        all_display_sources = list(qdrant_sources)
 
-        # add web sources formatted for display
-        for ws in web_sources[:3]:
+        for ws in web_sources[:2]:
             all_display_sources.append({
                 "text": ws.get("content", "")[:300],
                 "law_name": ws.get(
                     "title", "Web Result"
                 ),
                 "source_url": ws.get("url", ""),
-                "jurisdiction": jurisdiction or "General",
+                "jurisdiction": (
+                    jurisdiction or "General"
+                ),
                 "topic": topic or "general",
                 "agency": "🌐 Web Search",
-                "score": ws.get("score", 0.5),
+                "score": float(ws.get("score", 0.5)),
                 "effective_date": "",
                 "document_type": "web",
+                "chunk_index": 0,
+                "file_type": "web",
+                "title": ws.get("title", ""),
             })
 
-        top_score = (
-            qdrant_sources[0]["score"]
-            if qdrant_sources else 0
+        logger.info(
+            f"Pipeline DONE: source={answer_source} | "
+            f"display_sources={len(all_display_sources)}"
         )
 
         return {
@@ -180,16 +213,19 @@ class LegalRAGPipeline:
             "topic": topic,
             "has_results": True,
             "answer_source": answer_source,
-            "top_score": top_score,
+            "top_score": (
+                qdrant_sources[0]["score"]
+                if qdrant_sources else 0.0
+            ),
             "is_low_confidence": (
                 not qdrant_sources and not web_sources
             ),
             "disclaimer": DISCLAIMER,
         }
 
-    # ──────────────────────────────────────────────────
-    # TIER 1 - Qdrant Search
-    # ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════
+    # TIER 1 - QDRANT SEARCH
+    # ══════════════════════════════════════════════════
     def _get_qdrant_sources(
         self,
         question: str,
@@ -197,73 +233,88 @@ class LegalRAGPipeline:
         topic: Optional[str],
         top_k: int,
     ) -> list:
-        """Get relevant chunks from Qdrant"""
+        """
+        Search Qdrant with progressive filter relaxation.
+        Always returns whatever is found.
+        """
 
-        # try with full filters first
-        sources = self.retriever.retrieve(
-            question=question,
-            jurisdiction=jurisdiction,
-            topic=topic,
-            top_k=top_k,
-        )
-
-        # relax filters if nothing found
-        if not sources and topic and jurisdiction:
+        try:
+            # attempt 1: full filters
             sources = self.retriever.retrieve(
                 question=question,
                 jurisdiction=jurisdiction,
-                topic=None,
+                topic=topic,
                 top_k=top_k,
             )
 
-        if not sources and (jurisdiction or topic):
-            sources = self.retriever.retrieve(
-                question=question,
-                jurisdiction=None,
-                topic=None,
-                top_k=top_k,
-            )
+            # attempt 2: drop topic filter
+            if not sources and topic and jurisdiction:
+                logger.info(
+                    "Qdrant: relaxing topic filter"
+                )
+                sources = self.retriever.retrieve(
+                    question=question,
+                    jurisdiction=jurisdiction,
+                    topic=None,
+                    top_k=top_k,
+                )
 
-        # rerank if available
-        if (
-            sources and
-            self.reranker and
-            self.reranker.enabled and
-            len(sources) > top_k
-        ):
-            sources = self.reranker.rerank(
-                question=question,
-                chunks=sources,
-                top_k=top_k,
-            )
+            # attempt 3: no filters
+            if not sources and (jurisdiction or topic):
+                logger.info(
+                    "Qdrant: searching without filters"
+                )
+                sources = self.retriever.retrieve(
+                    question=question,
+                    jurisdiction=None,
+                    topic=None,
+                    top_k=top_k,
+                )
 
-        if sources:
-            logger.info(
-                f"Qdrant: {len(sources)} results"
-            )
-        else:
-            logger.info("Qdrant: no results")
+            # rerank if available
+            if (
+                sources and
+                self.reranker and
+                self.reranker.enabled and
+                len(sources) > top_k
+            ):
+                sources = self.reranker.rerank(
+                    question=question,
+                    chunks=sources,
+                    top_k=top_k,
+                )
 
-        return sources
+            return sources or []
 
-    # ──────────────────────────────────────────────────
-    # TIER 2 - Web Search
-    # ──────────────────────────────────────────────────
+        except Exception as e:
+            logger.error(f"Qdrant search error: {e}")
+            return []
+
+    # ══════════════════════════════════════════════════
+    # TIER 2 - WEB SEARCH
+    # ══════════════════════════════════════════════════
     def _get_web_sources(
         self,
         question: str,
         jurisdiction: Optional[str],
         topic: Optional[str],
     ) -> list:
-        """Get web search results (always try)"""
+        """
+        Search web via Tavily.
+        Always tries even if Qdrant returned results.
+        """
 
         if (
             not self.web_searcher or
             not self.web_searcher.enabled
         ):
+            logger.debug(
+                "Web search skipped: not enabled"
+            )
             return []
 
         try:
+            # focused search first
             results = self.web_searcher.search(
                 question=question,
                 jurisdiction=jurisdiction,
@@ -271,28 +322,26 @@ class LegalRAGPipeline:
                 max_results=3,
             )
 
+            # general search if focused found nothing
             if not results:
+                logger.info(
+                    "Web: focused search empty, "
+                    "trying general search"
+                )
                 results = self.web_searcher.search_general(
                     question=question,
                     max_results=3,
                 )
 
-            if results:
-                logger.info(
-                    f"Web search: {len(results)} results"
-                )
-            else:
-                logger.info("Web search: no results")
-
-            return results
+            return results or []
 
         except Exception as e:
-            logger.warning(f"Web search failed: {e}")
+            logger.warning(f"Web search error: {e}")
             return []
 
-    # ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════
     # COMBINED PROMPT BUILDER
-    # ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════
     def _build_combined_prompt(
         self,
         question: str,
@@ -302,102 +351,117 @@ class LegalRAGPipeline:
         topic: Optional[str],
     ) -> str:
         """
-        Build one prompt that includes:
-        - Retrieved documents (if any)
-        - Web search results (if any)
+        Builds one comprehensive prompt combining:
+        - Indexed legal documents
+        - Web search results
         - Instructions to use LLM knowledge too
         """
 
-        parts = []
+        sections = []
 
-        parts.append(
-            "You are LaborLens. Answer the following "
-            "question using ALL available information.\n"
-        )
-
-        # add Qdrant documents
+        # ── Qdrant documents section ───────────────────
         if qdrant_sources:
-            parts.append(
-                "═══ INDEXED LEGAL DOCUMENTS ═══\n"
-                "(From our verified legal document database)\n"
+            sections.append(
+                "=== INDEXED LEGAL DOCUMENTS ===\n"
+                "Source: Verified Indian labor law database\n"
             )
             for i, src in enumerate(qdrant_sources, 1):
-                parts.append(
+                sections.append(
                     f"[Document {i}]\n"
                     f"Law: {src.get('law_name', 'Unknown')}\n"
                     f"Jurisdiction: "
                     f"{src.get('jurisdiction', 'Unknown')}\n"
                     f"Agency: "
                     f"{src.get('agency', 'Unknown')}\n"
-                    f"Relevance: "
-                    f"{src.get('score', 0):.0%}\n\n"
-                    f"{src.get('text', '')}\n"
+                    f"Content:\n{src.get('text', '')}\n"
                 )
         else:
-            parts.append(
-                "═══ NO INDEXED DOCUMENTS FOUND ═══\n"
-                "Our database did not have matching "
-                "documents for this question.\n"
+            sections.append(
+                "=== INDEXED DOCUMENTS ===\n"
+                "No matching documents found in our "
+                "Indian legal database for this query.\n"
             )
 
-        # add web search results
+        # ── Web search section ─────────────────────────
         if web_sources:
-            parts.append(
-                "\n═══ WEB SEARCH RESULTS ═══\n"
-                "(From live internet search)\n"
+            sections.append(
+                "\n=== LIVE WEB SEARCH RESULTS ===\n"
+                "Source: Internet search (current info)\n"
             )
             for i, ws in enumerate(web_sources, 1):
-                parts.append(
+                sections.append(
                     f"[Web Result {i}]\n"
-                    f"Title: "
-                    f"{ws.get('title', 'Unknown')}\n"
+                    f"Title: {ws.get('title', 'Unknown')}\n"
                     f"URL: {ws.get('url', '')}\n"
-                    f"Content: "
-                    f"{ws.get('content', '')}\n"
+                    f"Content:\n"
+                    f"{ws.get('content', '')[:500]}\n"
                 )
+        else:
+            sections.append(
+                "\n=== WEB SEARCH ===\n"
+                "No web results available.\n"
+            )
 
-        # add instructions
-        parts.append(f"""
-═══ YOUR TASK ═══
+        # ── Main instruction section ───────────────────
+        sections.append(f"""
+=== YOUR INSTRUCTIONS ===
 
-USER QUESTION: {question}
+QUESTION FROM USER: {question}
 
-INSTRUCTIONS:
-1. Use the indexed legal documents as PRIMARY source (most trusted)
-2. Use web search results as SECONDARY source (current info)
-3. Use your own training knowledge as TERTIARY source (fill gaps)
-4. If the question is about a topic NOT covered by documents (like another country), use your knowledge and say so clearly
-5. ALWAYS give a helpful, complete answer - never say "I cannot answer"
-6. Show which information came from which source
-7. Be specific with numbers, dates, and provisions
-8. If the question mentions a country or topic outside Indian law, answer it using your knowledge
+You MUST follow these rules:
 
-FORMAT:
+RULE 1 - ALWAYS ANSWER COMPLETELY
+Never say "outside my expertise" or "I cannot answer this"
+Always provide helpful information on ANY topic
+
+RULE 2 - USE ALL SOURCES
+- Use indexed documents for Indian law specifics
+- Use web results for current rates and other countries
+- Use YOUR OWN TRAINING KNOWLEDGE to fill any gaps
+
+RULE 3 - FOR NON-INDIAN QUESTIONS
+If the question is about Australia, USA, UK, or any other country:
+- Answer it directly from your training knowledge RIGHT NOW
+- Do NOT say the documents do not cover it
+- Give specific details: laws, hours, rates, regulations
+
+RULE 4 - COMBINE EVERYTHING
+Give ONE comprehensive answer that covers:
+- What the documents say (if relevant)
+- What web results say (if found)
+- What you know from training (always)
+
+RULE 5 - BE SPECIFIC
+Give actual numbers, law names, dates
+Not vague statements
+
+FORMAT YOUR ANSWER:
 
 **Answer:**
-[Complete answer combining all sources]
+[Complete answer - cover ALL aspects of the question]
 
 **Key Details:**
-[Bullet points with specifics]
+- [Specific fact 1 with source label]
+- [Specific fact 2 with source label]
+- [Specific fact 3 with source label]
 
 **Sources Used:**
-[Which info came from: 📄 Documents / 🌐 Web Search / 🧠 AI Knowledge]
+- 📄 Indian Documents: [what was found]
+- 🌐 Web Search: [what was found]
+- 🧠 AI Knowledge: [what you added from training]
 
 **Legal Basis:**
-[Relevant laws and jurisdictions]
-
-**Important Note:**
-[Caveats, verify recommendations]
+[Relevant laws with jurisdictions]
 
 ---
 *Not legal advice. Consult a qualified lawyer.*
 """)
 
-        return "\n".join(parts)
+        return "\n".join(sections)
 
-    # ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════
     # COMPARISON
-    # ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════
     def run_comparison(
         self,
         question: str,
@@ -448,9 +512,15 @@ FORMAT:
             "disclaimer": DISCLAIMER,
         }
 
+    # ══════════════════════════════════════════════════
+    # ERROR RESPONSE
+    # ══════════════════════════════════════════════════
     def _error_response(
-        self, message, jurisdiction, topic
-    ):
+        self,
+        message: str,
+        jurisdiction: Optional[str],
+        topic: Optional[str],
+    ) -> Dict:
         return {
             "answer": message,
             "sources": [],
@@ -459,5 +529,6 @@ FORMAT:
             "topic": topic,
             "has_results": False,
             "answer_source": "error",
+            "is_low_confidence": True,
             "disclaimer": DISCLAIMER,
         }

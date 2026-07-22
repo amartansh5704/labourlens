@@ -20,7 +20,7 @@ class GroqLLM:
     def generate(
         self,
         prompt: str,
-        temperature: float = 0.15,
+        temperature: float = 0.30,
         max_tokens: Optional[int] = None,
     ) -> str:
         try:
