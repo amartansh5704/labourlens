@@ -150,6 +150,146 @@ def _render_sources(sources: list):
             if i < len(sources):
                 st.divider()
 
+# Add this function next to _get_qdrant_count and _render_sources
+
+def _get_documents_from_qdrant(
+    jurisdiction_filter: str = "All",
+    topic_filter: str = None,
+) -> list:
+    """
+    Get unique documents from Qdrant payloads.
+    Since SQLite is empty on cloud, we extract
+    document metadata from Qdrant chunk payloads.
+    """
+    try:
+        qdrant_host = os.getenv("QDRANT_HOST", "")
+        qdrant_key = os.getenv("QDRANT_API_KEY", "")
+        qdrant_col = os.getenv(
+            "QDRANT_COLLECTION",
+            "employment_law_india"
+        )
+
+        if qdrant_key and "cloud.qdrant.io" in qdrant_host:
+            qclient = QdrantClient(
+                url=f"https://{qdrant_host}",
+                api_key=qdrant_key,
+                check_compatibility=False,
+            )
+        else:
+            qclient = QdrantClient(
+                host=qdrant_host,
+                port=int(os.getenv("QDRANT_PORT", 6333))
+            )
+
+        # build filter
+        from qdrant_client.models import (
+            Filter, FieldCondition, MatchValue
+        )
+
+        conditions = []
+        if (
+            jurisdiction_filter and
+            jurisdiction_filter != "All"
+        ):
+            conditions.append(
+                FieldCondition(
+                    key="jurisdiction",
+                    match=MatchValue(
+                        value=jurisdiction_filter
+                    )
+                )
+            )
+        if topic_filter and topic_filter != "All":
+            conditions.append(
+                FieldCondition(
+                    key="topic",
+                    match=MatchValue(value=topic_filter)
+                )
+            )
+
+        scroll_filter = (
+            Filter(must=conditions) if conditions
+            else None
+        )
+
+        # scroll through all points to get payloads
+        all_points = []
+        offset = None
+
+        while True:
+            results, next_offset = qclient.scroll(
+                collection_name=qdrant_col,
+                scroll_filter=scroll_filter,
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            all_points.extend(results)
+
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        # extract unique documents from chunk payloads
+        seen_docs = {}
+
+        for point in all_points:
+            payload = point.payload or {}
+            doc_id = payload.get(
+                "document_id",
+                payload.get("source_url", "unknown")
+            )
+
+            if doc_id not in seen_docs:
+                seen_docs[doc_id] = {
+                    "id": doc_id,
+                    "title": payload.get("title", ""),
+                    "law_name": payload.get(
+                        "law_name", "Unknown"
+                    ),
+                    "jurisdiction": payload.get(
+                        "jurisdiction", ""
+                    ),
+                    "topic": payload.get("topic", ""),
+                    "agency": payload.get("agency", ""),
+                    "source_url": payload.get(
+                        "source_url", ""
+                    ),
+                    "effective_date": payload.get(
+                        "effective_date", ""
+                    ),
+                    "document_type": payload.get(
+                        "document_type", ""
+                    ),
+                    "file_type": payload.get(
+                        "file_type", ""
+                    ),
+                    "chunk_count": 0,
+                    "sample_text": payload.get(
+                        "text", ""
+                    )[:300],
+                }
+
+            # count chunks per document
+            seen_docs[doc_id]["chunk_count"] += 1
+
+        # sort by jurisdiction then law name
+        documents = sorted(
+            seen_docs.values(),
+            key=lambda d: (
+                d["jurisdiction"],
+                d["law_name"]
+            )
+        )
+
+        return documents
+
+    except Exception as e:
+        st.error(f"Failed to load from Qdrant: {e}")
+        return []
+
 
 # ─────────────────────────────────────────────────────────
 # LOAD PIPELINE - cached so model loads only once
@@ -499,123 +639,128 @@ elif page == "📂 Document Browser":
     st.markdown("Browse all indexed legal documents.")
     st.markdown("---")
 
-    # show Qdrant stats first
+    # show total vectors
     vec_count = _get_qdrant_count()
     if vec_count > 0:
         st.success(
             f"✅ **{vec_count} law passages** indexed "
-            f"in Qdrant Cloud and available for search."
+            f"in Qdrant Cloud"
         )
 
-    db = get_db_session()
+    # filters
+    col1, col2 = st.columns(2)
 
-    try:
-        col1, col2 = st.columns(2)
+    with col1:
+        j_filter = st.selectbox(
+            "Filter by Jurisdiction",
+            ["All"] + list(JURISDICTIONS.keys()),
+            key="browser_j"
+        )
 
-        with col1:
-            j_filter = st.selectbox(
-                "Filter by Jurisdiction",
-                ["All"] + list(JURISDICTIONS.keys()),
-                key="browser_j"
+    with col2:
+        t_opts = ["All"] + list(TOPICS.values())
+        t_filter_display = st.selectbox(
+            "Filter by Topic",
+            t_opts,
+            key="browser_t"
+        )
+        t_filter = None
+        if t_filter_display != "All":
+            t_filter = list(TOPICS.keys())[
+                list(TOPICS.values()).index(
+                    t_filter_display
+                )
+            ]
+
+    # get documents from Qdrant
+    with st.spinner("Loading documents from Qdrant..."):
+        documents = _get_documents_from_qdrant(
+            jurisdiction_filter=j_filter,
+            topic_filter=t_filter,
+        )
+
+    st.markdown(
+        f"**{len(documents)} documents found | "
+        f"{vec_count} total chunks**"
+    )
+    st.markdown("---")
+
+    if not documents:
+        st.info(
+            "No documents found for this filter. "
+            "Try selecting 'All' for both filters."
+        )
+    else:
+        for doc in documents:
+            law_name = (
+                doc.get("law_name") or
+                doc.get("title") or
+                "Untitled"
             )
+            jurisdiction = doc.get("jurisdiction", "")
+            chunk_count = doc.get("chunk_count", 0)
+            topic_key = doc.get("topic", "")
+            topic_name = TOPICS.get(topic_key, topic_key)
 
-        with col2:
-            t_opts = ["All"] + list(TOPICS.values())
-            t_filter_display = st.selectbox(
-                "Filter by Topic",
-                t_opts,
-                key="browser_t"
-            )
-            t_filter = None
-            if t_filter_display != "All":
-                t_filter = list(TOPICS.keys())[
-                    list(TOPICS.values()).index(
-                        t_filter_display
+            with st.expander(
+                f"✅ {jurisdiction} | "
+                f"{law_name[:50]} | "
+                f"{chunk_count} chunks"
+            ):
+                # metrics row
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric(
+                        "Jurisdiction", jurisdiction
                     )
-                ]
+                with c2:
+                    st.metric(
+                        "Topic", topic_name[:15]
+                    )
+                with c3:
+                    st.metric("Chunks", chunk_count)
+                with c4:
+                    file_type = doc.get(
+                        "file_type", "unknown"
+                    ).upper()
+                    st.metric("Type", file_type)
 
-        try:
-            query = db.query(Document)
-            if j_filter != "All":
-                query = query.filter(
-                    Document.jurisdiction == j_filter
-                )
-            if t_filter:
-                query = query.filter(
-                    Document.topic == t_filter
-                )
-            documents = query.all()
-        except Exception:
-            documents = []
+                # details
+                if doc.get("law_name"):
+                    st.markdown(
+                        f"**📜 Law:** {doc['law_name']}"
+                    )
+                if doc.get("agency"):
+                    st.markdown(
+                        f"**🏢 Agency:** {doc['agency']}"
+                    )
+                if doc.get("effective_date"):
+                    st.markdown(
+                        f"**📅 Effective:** "
+                        f"{doc['effective_date']}"
+                    )
+                if doc.get("document_type"):
+                    st.markdown(
+                        f"**📋 Type:** "
+                        f"{doc['document_type'].title()}"
+                    )
 
-        st.markdown(
-            f"**{len(documents)} documents in local DB**"
-        )
+                # sample text
+                sample = doc.get("sample_text", "")
+                if sample:
+                    st.markdown("**📝 Content Preview:**")
+                    st.info(
+                        sample + "..."
+                        if len(sample) >= 295
+                        else sample
+                    )
 
-        if not documents:
-            st.info(
-                "📭 No documents in local database.\n\n"
-                "This is normal on cloud deployment. "
-                "Document metadata is stored during "
-                "local scraping.\n\n"
-                "**All law passages are in Qdrant Cloud** "
-                "and the **Chat feature works fully**."
-            )
-        else:
-            st.markdown("---")
-            for doc in documents:
-                title = (
-                    doc.title or doc.law_name or "Untitled"
-                )
-                status = (
-                    "✅" if doc.is_indexed else "⏳"
-                )
-
-                with st.expander(
-                    f"{status} {doc.jurisdiction} | "
-                    f"{title[:50]}"
-                ):
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.metric(
-                            "Jurisdiction",
-                            doc.jurisdiction
-                        )
-                    with c2:
-                        st.metric(
-                            "Topic",
-                            TOPICS.get(
-                                doc.topic, doc.topic
-                            )[:15]
-                        )
-                    with c3:
-                        st.metric(
-                            "Chunks", doc.chunk_count
-                        )
-
-                    if doc.law_name:
-                        st.markdown(
-                            f"**Law:** {doc.law_name}"
-                        )
-                    if doc.agency:
-                        st.markdown(
-                            f"**Agency:** {doc.agency}"
-                        )
-                    if doc.raw_text:
-                        st.text(
-                            doc.raw_text[:300] + "..."
-                        )
-                    if (
-                        doc.url and
-                        doc.url.startswith("http")
-                    ):
-                        st.markdown(
-                            f"[🔗 Source]({doc.url})"
-                        )
-    except Exception as e:
-        st.error(f"Database error: {e}")
-    finally:
-        db.close()
+                # source link
+                url = doc.get("source_url", "")
+                if url and url.startswith("http"):
+                    st.markdown(
+                        f"[🔗 View Original Source]({url})"
+                    )
 
 
 # ═════════════════════════════════════════════════════════
@@ -626,44 +771,41 @@ elif page == "📊 Statistics":
     st.markdown("## 📊 System Statistics")
     st.markdown("---")
 
-    # get stats safely
-    try:
-        stats = get_db_stats()
-    except Exception:
-        stats = {
-            "total_documents": 0,
-            "indexed_documents": 0,
-            "unindexed_documents": 0,
-            "total_chunks": 0,
-            "total_scrape_attempts": 0,
-            "failed_scrapes": 0,
-            "by_jurisdiction": {
-                j: 0 for j in JURISDICTIONS.keys()
-            },
-            "by_topic": {
-                t: 0 for t in TOPICS.keys()
-            },
-        }
-
     vec_count = _get_qdrant_count()
+
+    # get documents from Qdrant for stats
+    all_docs = _get_documents_from_qdrant()
+
+    # calculate stats from Qdrant documents
+    total_docs = len(all_docs)
+    total_chunks = sum(
+        d.get("chunk_count", 0) for d in all_docs
+    )
+
+    by_jurisdiction = {}
+    for j in JURISDICTIONS.keys():
+        count = len([
+            d for d in all_docs
+            if d.get("jurisdiction") == j
+        ])
+        by_jurisdiction[j] = count
+
+    by_topic = {}
+    for t in TOPICS.keys():
+        count = len([
+            d for d in all_docs
+            if d.get("topic") == t
+        ])
+        by_topic[t] = count
 
     # top metrics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric(
-            "📄 Documents",
-            stats.get("total_documents", 0)
-        )
+        st.metric("📄 Documents", total_docs)
     with col2:
-        st.metric(
-            "✅ Indexed",
-            stats.get("indexed_documents", 0)
-        )
+        st.metric("✅ All Indexed", total_docs)
     with col3:
-        st.metric(
-            "🔢 Chunks",
-            stats.get("total_chunks", 0)
-        )
+        st.metric("🔢 Total Chunks", total_chunks)
     with col4:
         st.metric("🧠 Qdrant Vectors", vec_count)
 
@@ -671,32 +813,26 @@ elif page == "📊 Statistics":
 
     if vec_count > 0:
         st.success(
-            f"✅ **{vec_count}** law passages indexed "
+            f"✅ **{vec_count}** law passages from "
+            f"**{total_docs}** documents indexed "
             f"in Qdrant Cloud"
-        )
-    else:
-        st.warning(
-            "No vectors in Qdrant. "
-            "Run ingestion locally."
         )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### By Jurisdiction")
-        by_j = stats.get("by_jurisdiction", {})
-        for j, count in by_j.items():
-            bar = "█" * min(count * 2, 20)
+        st.markdown("### 🏛️ By Jurisdiction")
+        for j, count in by_jurisdiction.items():
+            bar = "█" * min(count * 3, 20)
             st.markdown(
-                f"`{j:<15}` **{count}** {bar}"
+                f"`{j:<15}` **{count}** docs {bar}"
             )
 
     with col2:
-        st.markdown("### By Topic")
-        by_t = stats.get("by_topic", {})
-        for t_key, count in by_t.items():
+        st.markdown("### 📋 By Topic")
+        for t_key, count in by_topic.items():
             t_name = TOPICS.get(t_key, t_key)
-            bar = "█" * min(count * 2, 20)
+            bar = "█" * min(count * 3, 20)
             st.markdown(
                 f"`{t_name[:20]:<20}` **{count}** {bar}"
             )
