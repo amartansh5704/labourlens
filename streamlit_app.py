@@ -26,6 +26,9 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────
 # LOAD SECRETS INTO ENVIRONMENT
 # ─────────────────────────────────────────────────────────
+# At the top of streamlit_app.py
+# After load_secrets() add this
+
 def load_secrets():
     """Load Streamlit secrets into os.environ"""
     try:
@@ -36,6 +39,12 @@ def load_secrets():
         load_dotenv()
 
 load_secrets()
+
+# Initialize database tables
+# This creates empty tables if they don't exist
+# Safe to call multiple times
+from database.connection import init_db
+init_db()
 
 # ─────────────────────────────────────────────────────────
 # IMPORTS (after secrets loaded)
@@ -424,11 +433,15 @@ elif page == "⚖️ Compare Jurisdictions":
 elif page == "📂 Document Browser":
 
     st.markdown("## 📂 Document Browser")
-    st.markdown("Browse all indexed legal documents.")
+    st.markdown(
+        "Browse all scraped and indexed legal documents."
+    )
     st.markdown("---")
 
-    from database.connection import get_db_session
+    # init db to make sure tables exist
+    from database.connection import init_db, get_db_session
     from database.models import Document
+    init_db()
 
     db = get_db_session()
 
@@ -468,16 +481,28 @@ elif page == "📂 Document Browser":
                 Document.topic == t_filter
             )
 
-        documents = query.all()
-        st.markdown(f"**{len(documents)} documents found**")
-        st.markdown("---")
+        try:
+            documents = query.all()
+        except Exception:
+            documents = []
+
+        st.markdown(
+            f"**{len(documents)} documents found**"
+        )
 
         if not documents:
             st.info(
-                "No documents found. "
-                "Run the scraper to add documents."
+                "📭 No documents in local database.\n\n"
+                "This is normal on cloud deployment. "
+                "The document metadata is stored locally "
+                "during scraping.\n\n"
+                "**Your data is safe** - all "
+                f"**{_get_qdrant_count()}** law passages "
+                "are indexed in Qdrant Cloud and "
+                "the Chat feature works fully."
             )
         else:
+            st.markdown("---")
             for doc in documents:
                 title = (
                     doc.title or
@@ -505,9 +530,13 @@ elif page == "📂 Document Browser":
                         topic_name = TOPICS.get(
                             doc.topic, doc.topic
                         )
-                        st.metric("Topic", topic_name[:15])
+                        st.metric(
+                            "Topic", topic_name[:15]
+                        )
                     with col3:
-                        st.metric("Chunks", doc.chunk_count)
+                        st.metric(
+                            "Chunks", doc.chunk_count
+                        )
 
                     if doc.law_name:
                         st.markdown(
@@ -517,14 +546,11 @@ elif page == "📂 Document Browser":
                         st.markdown(
                             f"**Agency:** {doc.agency}"
                         )
-                    if doc.scraped_at:
-                        st.markdown(
-                            f"**Scraped:** "
-                            f"{str(doc.scraped_at)[:10]}"
-                        )
                     if doc.raw_text:
                         st.markdown("**Preview:**")
-                        st.text(doc.raw_text[:300] + "...")
+                        st.text(
+                            doc.raw_text[:300] + "..."
+                        )
                     if (
                         doc.url and
                         doc.url.startswith("http")
@@ -532,6 +558,14 @@ elif page == "📂 Document Browser":
                         st.markdown(
                             f"[🔗 Source]({doc.url})"
                         )
+
+    except Exception as e:
+        st.error(
+            f"Database error: {e}\n\n"
+            "The document browser requires a local "
+            "database. Use the Chat feature to search "
+            "legal documents."
+        )
     finally:
         db.close()
 
@@ -544,10 +578,33 @@ elif page == "📊 Statistics":
     st.markdown("## 📊 System Statistics")
     st.markdown("---")
 
-    from database.connection import get_db_stats
+    from database.connection import init_db, get_db_stats
     from qdrant_client import QdrantClient
 
-    stats = get_db_stats()
+    # make sure tables exist
+    init_db()
+
+    # get stats safely
+    try:
+        stats = get_db_stats()
+    except Exception:
+        stats = {
+            "total_documents": 0,
+            "indexed_documents": 0,
+            "unindexed_documents": 0,
+            "total_chunks": 0,
+            "total_scrape_attempts": 0,
+            "failed_scrapes": 0,
+            "by_jurisdiction": {
+                j: 0 for j in JURISDICTIONS.keys()
+            },
+            "by_topic": {
+                t: 0 for t in TOPICS.keys()
+            },
+        }
+
+    # get Qdrant vector count
+    vec_count = _get_qdrant_count()
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -566,34 +623,21 @@ elif page == "📊 Statistics":
             stats.get("total_chunks", 0)
         )
     with col4:
-        # get Qdrant vector count
-        try:
-            qdrant_host = os.getenv("QDRANT_HOST", "")
-            qdrant_key = os.getenv("QDRANT_API_KEY", "")
-            qdrant_col = os.getenv(
-                "QDRANT_COLLECTION",
-                "employment_law_india"
-            )
-            if qdrant_key and "cloud.qdrant.io" in qdrant_host:
-                qclient = QdrantClient(
-                    url=f"https://{qdrant_host}",
-                    api_key=qdrant_key,
-                    check_compatibility=False,
-                )
-            else:
-                qclient = QdrantClient(
-                    host=qdrant_host,
-                    port=int(os.getenv("QDRANT_PORT", 6333))
-                )
-            vec_count = qclient.count(
-                collection_name=qdrant_col,
-                exact=True
-            ).count
-        except Exception:
-            vec_count = 0
         st.metric("🧠 Qdrant Vectors", vec_count)
 
     st.markdown("---")
+
+    # show note about cloud deployment
+    if vec_count > 0:
+        st.success(
+            f"✅ **{vec_count} law passages** are indexed "
+            f"in Qdrant Cloud and available for search."
+        )
+    else:
+        st.warning(
+            "No vectors found in Qdrant. "
+            "Run the ingestion pipeline locally."
+        )
 
     col1, col2 = st.columns(2)
 
@@ -617,7 +661,6 @@ elif page == "📊 Statistics":
             )
 
     st.markdown("---")
-
     if st.button("🔄 Refresh Stats"):
         st.rerun()
 
@@ -688,3 +731,31 @@ def _render_sources(sources: list):
 
             if i < len(sources):
                 st.divider()
+
+def _get_qdrant_count() -> int:
+    """Get total vectors in Qdrant"""
+    try:
+        from qdrant_client import QdrantClient
+        qdrant_host = os.getenv("QDRANT_HOST", "")
+        qdrant_key = os.getenv("QDRANT_API_KEY", "")
+        qdrant_col = os.getenv(
+            "QDRANT_COLLECTION",
+            "employment_law_india"
+        )
+        if qdrant_key and "cloud.qdrant.io" in qdrant_host:
+            qclient = QdrantClient(
+                url=f"https://{qdrant_host}",
+                api_key=qdrant_key,
+                check_compatibility=False,
+            )
+        else:
+            qclient = QdrantClient(
+                host=qdrant_host,
+                port=int(os.getenv("QDRANT_PORT", 6333))
+            )
+        return qclient.count(
+            collection_name=qdrant_col,
+            exact=True
+        ).count
+    except Exception:
+        return 0
