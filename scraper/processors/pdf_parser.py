@@ -75,38 +75,6 @@ def _extract_with_pdfplumber(pdf_bytes: bytes) -> str:
         return ""
 
 
-def _extract_with_pymupdf(pdf_bytes: bytes) -> str:
-    """
-    Extract text using PyMuPDF (fitz).
-    Better fallback for complex PDFs.
-    """
-    try:
-        text_parts = []
-
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-        for i, page in enumerate(doc):
-            page_text = page.get_text()
-
-            if page_text:
-                text_parts.append(f"\n--- Page {i+1} ---\n")
-                text_parts.append(page_text)
-
-        doc.close()
-
-        full_text = "\n".join(text_parts)
-        full_text = ftfy.fix_text(full_text)
-
-        logger.debug(
-            f"PyMuPDF extracted {len(full_text)} characters"
-        )
-        return full_text
-
-    except Exception as e:
-        logger.warning(f"PyMuPDF failed: {e}")
-        return ""
-
-
 def _clean_pdf_text(text: str) -> str:
     """
     Clean text extracted from PDFs.

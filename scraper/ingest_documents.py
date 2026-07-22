@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import pdfplumber
-import fitz
 import ftfy
 import re
 from pathlib import Path
@@ -104,7 +103,7 @@ def detect_metadata_from_path(file_path: Path) -> dict:
 # TEXT EXTRACTION
 # ─────────────────────────────────────────────────────────
 def extract_text_from_pdf(file_path: Path) -> str:
-    """Extract text - tries pdfplumber then PyMuPDF"""
+    """Extract text - pdfplumber only (PyMuPDF removed)"""
 
     try:
         text_parts = []
@@ -127,30 +126,6 @@ def extract_text_from_pdf(file_path: Path) -> str:
 
     except Exception as e:
         logger.warning(f"pdfplumber failed: {e}")
-
-    try:
-        text_parts = []
-        doc = fitz.open(str(file_path))
-        logger.info(f"PyMuPDF: PDF has {len(doc)} pages")
-
-        for i, page in enumerate(doc):
-            page_text = page.get_text()
-            if page_text and page_text.strip():
-                text_parts.append(f"\n--- Page {i+1} ---\n")
-                text_parts.append(page_text)
-
-        doc.close()
-        text = "\n".join(text_parts)
-        text = ftfy.fix_text(text)
-
-        if len(text.strip()) > 200:
-            logger.info(
-                f"PyMuPDF extracted {len(text):,} chars"
-            )
-            return clean_text(text)
-
-    except Exception as e:
-        logger.warning(f"PyMuPDF also failed: {e}")
 
     logger.error(f"Could not extract text from: {file_path}")
     return ""

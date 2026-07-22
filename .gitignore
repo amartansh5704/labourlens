@@ -34,3 +34,5 @@ models/
 # Logs
 logs/
 *.log
+
+.streamlit/secrets.toml
