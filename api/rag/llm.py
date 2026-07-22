@@ -1,6 +1,4 @@
 # api/rag/llm.py
-# Smarter LLM with better system prompt
-
 from groq import Groq
 from api.core.config import settings
 from api.rag.prompts import SYSTEM_PROMPT
@@ -17,7 +15,6 @@ class GroqLLM:
         self.client = Groq(api_key=settings.GROQ_API_KEY)
         self.model = settings.GROQ_MODEL
         self.max_tokens = settings.MAX_ANSWER_TOKENS
-
         logger.info(f"GroqLLM ready: {self.model}")
 
     def generate(
@@ -26,7 +23,6 @@ class GroqLLM:
         temperature: float = 0.15,
         max_tokens: Optional[int] = None,
     ) -> str:
-        """Generate response from Groq"""
         try:
             logger.debug(
                 f"Groq request: {len(prompt)} chars "
@@ -50,7 +46,9 @@ class GroqLLM:
             )
 
             answer = response.choices[0].message.content
-            logger.debug(f"Groq response: {len(answer)} chars")
+            logger.debug(
+                f"Groq response: {len(answer)} chars"
+            )
             return answer
 
         except Exception as e:
