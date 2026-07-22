@@ -1,49 +1,68 @@
 # api/rag/pipeline.py
-# Add reranker between retrieval and generation
+# Smart pipeline - always combines all available sources
+# Tier 1: Qdrant indexed documents
+# Tier 2: Web search (Tavily)
+# Tier 3: LLM general knowledge
+# ALL tiers contribute to every answer
 
 from api.rag.retriever import LegalRetriever
 from api.rag.llm import GroqLLM
-from api.rag.reranker import LegalReranker
-from api.rag.web_search import WebSearcher
 from api.rag.prompts import (
-    build_rag_prompt,
     build_context_string,
     build_no_results_message,
-    build_web_search_prompt,
-    build_llm_knowledge_prompt,
+    SYSTEM_PROMPT,
 )
 from api.core.config import settings
 from shared.constants import DISCLAIMER
 from loguru import logger
 from typing import Optional, Dict
 
+# try importing optional modules
+try:
+    from api.rag.web_search import WebSearcher
+    WEB_SEARCH_AVAILABLE = True
+except Exception:
+    WEB_SEARCH_AVAILABLE = False
+
+try:
+    from api.rag.reranker import LegalReranker
+    RERANKER_AVAILABLE = True
+except Exception:
+    RERANKER_AVAILABLE = False
+
 
 class LegalRAGPipeline:
     """
-    3-tier RAG pipeline WITH reranking:
-
-    TIER 1: Qdrant (fetch 20) → Reranker (pick 5) → LLM
-    TIER 2: Web search → LLM
-    TIER 3: LLM general knowledge
+    Combined pipeline that uses ALL available sources
+    for every question to give the best possible answer.
     """
 
     def __init__(self):
-        logger.info("Initializing RAG Pipeline with Reranker...")
+        logger.info("Initializing Combined RAG Pipeline...")
 
         self.retriever = LegalRetriever()
         self.llm = GroqLLM()
-        self.web_searcher = WebSearcher()
 
-        # initialize reranker
-        if settings.ENABLE_RERANKER:
+        # web search (optional)
+        if WEB_SEARCH_AVAILABLE:
+            self.web_searcher = WebSearcher()
+            if self.web_searcher.enabled:
+                logger.info("Web search: ENABLED")
+            else:
+                logger.info("Web search: DISABLED (no key)")
+        else:
+            self.web_searcher = None
+            logger.info("Web search: NOT AVAILABLE")
+
+        # reranker (optional)
+        if RERANKER_AVAILABLE and settings.ENABLE_RERANKER:
             self.reranker = LegalReranker()
             if self.reranker.enabled:
                 logger.info("Reranker: ENABLED")
             else:
-                logger.warning("Reranker: DISABLED (load failed)")
+                self.reranker = None
         else:
             self.reranker = None
-            logger.info("Reranker: DISABLED (config)")
 
         logger.info("RAG Pipeline ready")
 
@@ -66,8 +85,7 @@ class LegalRAGPipeline:
 
         if len(question) > settings.MAX_QUESTION_LENGTH:
             return self._error_response(
-                f"Question too long. "
-                f"Max {settings.MAX_QUESTION_LENGTH} chars.",
+                f"Question too long.",
                 jurisdiction, topic
             )
 
@@ -76,151 +94,43 @@ class LegalRAGPipeline:
             f"| {jurisdiction} | {topic}"
         )
 
-        # ── TIER 1: Qdrant + Reranker ─────────────────
-        sources = self._try_qdrant_with_reranking(
+        # ══════════════════════════════════════════════
+        # GATHER ALL SOURCES
+        # ══════════════════════════════════════════════
+
+        # TIER 1: Qdrant indexed documents
+        qdrant_sources = self._get_qdrant_sources(
             question=question,
             jurisdiction=jurisdiction,
             topic=topic,
             top_k=top_k,
         )
 
-        if sources:
-            logger.info(
-                f"TIER 1 SUCCESS: {len(sources)} docs"
-            )
-            return self._generate_from_qdrant(
-                question=question,
-                sources=sources,
-                jurisdiction=jurisdiction,
-                topic=topic,
-            )
-
-        # ── TIER 2: Web Search ─────────────────────────
-        logger.info("TIER 1 MISS → trying web search...")
-        web_results = self._try_web_search(
+        # TIER 2: Web search
+        web_sources = self._get_web_sources(
             question=question,
             jurisdiction=jurisdiction,
             topic=topic,
         )
 
-        if web_results:
-            logger.info(
-                f"TIER 2 SUCCESS: {len(web_results)} results"
-            )
-            return self._generate_from_web(
-                question=question,
-                web_results=web_results,
-                jurisdiction=jurisdiction,
-                topic=topic,
-            )
-
-        # ── TIER 3: LLM Knowledge ─────────────────────
-        logger.info("TIER 2 MISS → using LLM knowledge...")
-        return self._generate_from_llm_knowledge(
+        # ══════════════════════════════════════════════
+        # BUILD COMBINED PROMPT
+        # ══════════════════════════════════════════════
+        prompt = self._build_combined_prompt(
             question=question,
+            qdrant_sources=qdrant_sources,
+            web_sources=web_sources,
             jurisdiction=jurisdiction,
             topic=topic,
         )
 
-    # ──────────────────────────────────────────────────
-    # TIER 1 - Qdrant with Reranking
-    # ──────────────────────────────────────────────────
-    def _try_qdrant_with_reranking(
-        self,
-        question: str,
-        jurisdiction: Optional[str],
-        topic: Optional[str],
-        top_k: int,
-    ) -> list:
-        """
-        Fetch candidates from Qdrant then rerank them.
-        Tries progressively relaxed filters if nothing found.
-        """
-
-        # attempt 1: full filters
-        candidates = self.retriever.retrieve(
-            question=question,
-            jurisdiction=jurisdiction,
-            topic=topic,
-            top_k=top_k,
-        )
-
-        # attempt 2: drop topic filter
-        if not candidates and topic and jurisdiction:
-            logger.info("Relaxing: dropping topic filter")
-            candidates = self.retriever.retrieve(
-                question=question,
-                jurisdiction=jurisdiction,
-                topic=None,
-                top_k=top_k,
-            )
-
-        # attempt 3: no filters
-        if not candidates and (jurisdiction or topic):
-            logger.info("Relaxing: no filters")
-            candidates = self.retriever.retrieve(
-                question=question,
-                jurisdiction=None,
-                topic=None,
-                top_k=top_k,
-            )
-
-        if not candidates:
-            return []
-
-        # ── RERANKING STEP ─────────────────────────────
-        if (
-            self.reranker and
-            self.reranker.enabled and
-            len(candidates) > top_k
-        ):
-            logger.info(
-                f"Reranking {len(candidates)} candidates "
-                f"→ top {top_k}"
-            )
-            final_chunks = self.reranker.rerank(
-                question=question,
-                chunks=candidates,
-                top_k=top_k,
-            )
-            logger.info(
-                f"After reranking: {len(final_chunks)} chunks"
-            )
-        else:
-            # no reranking, just take top_k
-            final_chunks = candidates[:top_k]
-
-        return final_chunks
-
-    def _generate_from_qdrant(
-        self,
-        question: str,
-        sources: list,
-        jurisdiction: Optional[str],
-        topic: Optional[str],
-    ) -> Dict:
-        """Generate answer from Qdrant + reranked chunks"""
-
-        # use rerank_score if available, else qdrant score
-        top_score = (
-            sources[0].get("rerank_score") or
-            sources[0].get("score", 0)
-        )
-
-        # low confidence if top score is low
-        is_low_confidence = top_score < 0.3
-
-        context = build_context_string(sources)
-        prompt = build_rag_prompt(
-            question=question,
-            context=context,
-            is_low_confidence=is_low_confidence
-        )
-
+        # ══════════════════════════════════════════════
+        # GENERATE ANSWER (Tier 3 = LLM knowledge)
+        # ══════════════════════════════════════════════
         try:
             answer = self.llm.generate(
                 prompt=prompt,
-                temperature=0.15
+                temperature=0.2
             )
         except Exception as e:
             logger.error(f"LLM error: {e}")
@@ -228,142 +138,262 @@ class LegalRAGPipeline:
                 f"AI error: {e}", jurisdiction, topic
             )
 
-        # add reranking info to sources for display
-        for source in sources:
-            if "rerank_score" in source:
-                source["score"] = round(
-                    source["rerank_score"], 4
-                )
+        # determine answer source
+        if qdrant_sources and web_sources:
+            answer_source = "all_sources"
+        elif qdrant_sources:
+            answer_source = "indexed_documents"
+        elif web_sources:
+            answer_source = "web_search"
+        else:
+            answer_source = "llm_knowledge"
+
+        # combine all sources for display
+        all_display_sources = qdrant_sources.copy()
+
+        # add web sources formatted for display
+        for ws in web_sources[:3]:
+            all_display_sources.append({
+                "text": ws.get("content", "")[:300],
+                "law_name": ws.get(
+                    "title", "Web Result"
+                ),
+                "source_url": ws.get("url", ""),
+                "jurisdiction": jurisdiction or "General",
+                "topic": topic or "general",
+                "agency": "🌐 Web Search",
+                "score": ws.get("score", 0.5),
+                "effective_date": "",
+                "document_type": "web",
+            })
+
+        top_score = (
+            qdrant_sources[0]["score"]
+            if qdrant_sources else 0
+        )
 
         return {
             "answer": answer,
-            "sources": sources,
-            "web_sources": [],
+            "sources": all_display_sources,
+            "web_sources": web_sources,
             "jurisdiction": jurisdiction,
             "topic": topic,
             "has_results": True,
-            "answer_source": "indexed_documents",
+            "answer_source": answer_source,
             "top_score": top_score,
-            "is_low_confidence": is_low_confidence,
+            "is_low_confidence": (
+                not qdrant_sources and not web_sources
+            ),
             "disclaimer": DISCLAIMER,
         }
 
     # ──────────────────────────────────────────────────
+    # TIER 1 - Qdrant Search
+    # ──────────────────────────────────────────────────
+    def _get_qdrant_sources(
+        self,
+        question: str,
+        jurisdiction: Optional[str],
+        topic: Optional[str],
+        top_k: int,
+    ) -> list:
+        """Get relevant chunks from Qdrant"""
+
+        # try with full filters first
+        sources = self.retriever.retrieve(
+            question=question,
+            jurisdiction=jurisdiction,
+            topic=topic,
+            top_k=top_k,
+        )
+
+        # relax filters if nothing found
+        if not sources and topic and jurisdiction:
+            sources = self.retriever.retrieve(
+                question=question,
+                jurisdiction=jurisdiction,
+                topic=None,
+                top_k=top_k,
+            )
+
+        if not sources and (jurisdiction or topic):
+            sources = self.retriever.retrieve(
+                question=question,
+                jurisdiction=None,
+                topic=None,
+                top_k=top_k,
+            )
+
+        # rerank if available
+        if (
+            sources and
+            self.reranker and
+            self.reranker.enabled and
+            len(sources) > top_k
+        ):
+            sources = self.reranker.rerank(
+                question=question,
+                chunks=sources,
+                top_k=top_k,
+            )
+
+        if sources:
+            logger.info(
+                f"Qdrant: {len(sources)} results"
+            )
+        else:
+            logger.info("Qdrant: no results")
+
+        return sources
+
+    # ──────────────────────────────────────────────────
     # TIER 2 - Web Search
     # ──────────────────────────────────────────────────
-    def _try_web_search(
+    def _get_web_sources(
         self,
         question: str,
         jurisdiction: Optional[str],
         topic: Optional[str],
     ) -> list:
-        if not self.web_searcher.enabled:
+        """Get web search results (always try)"""
+
+        if (
+            not self.web_searcher or
+            not self.web_searcher.enabled
+        ):
             return []
 
-        results = self.web_searcher.search(
-            question=question,
-            jurisdiction=jurisdiction,
-            topic=topic,
-            max_results=5,
-        )
+        try:
+            results = self.web_searcher.search(
+                question=question,
+                jurisdiction=jurisdiction,
+                topic=topic,
+                max_results=3,
+            )
 
-        if results:
+            if not results:
+                results = self.web_searcher.search_general(
+                    question=question,
+                    max_results=3,
+                )
+
+            if results:
+                logger.info(
+                    f"Web search: {len(results)} results"
+                )
+            else:
+                logger.info("Web search: no results")
+
             return results
 
-        return self.web_searcher.search_general(
-            question=question,
-            max_results=3,
-        )
-
-    def _generate_from_web(
-        self,
-        question: str,
-        web_results: list,
-        jurisdiction: Optional[str],
-        topic: Optional[str],
-    ) -> Dict:
-        web_context = self.web_searcher.format_for_prompt(
-            web_results
-        )
-        prompt = build_web_search_prompt(
-            question=question,
-            web_context=web_context,
-        )
-
-        try:
-            answer = self.llm.generate(
-                prompt=prompt,
-                temperature=0.2
-            )
         except Exception as e:
-            logger.error(f"LLM error on web: {e}")
-            answer = f"Web search found results but AI failed: {e}"
-
-        web_sources_formatted = [
-            {
-                "text": r.get("content", "")[:300],
-                "law_name": r.get("title", "Web Result"),
-                "source_url": r.get("url", ""),
-                "jurisdiction": jurisdiction or "General",
-                "topic": topic or "general",
-                "agency": "Web Search",
-                "score": r.get("score", 0.5),
-                "effective_date": "",
-                "document_type": "web",
-            }
-            for r in web_results[:3]
-        ]
-
-        return {
-            "answer": answer,
-            "sources": web_sources_formatted,
-            "web_sources": web_results,
-            "jurisdiction": jurisdiction,
-            "topic": topic,
-            "has_results": True,
-            "answer_source": "web_search",
-            "is_low_confidence": False,
-            "disclaimer": DISCLAIMER,
-        }
+            logger.warning(f"Web search failed: {e}")
+            return []
 
     # ──────────────────────────────────────────────────
-    # TIER 3 - LLM Knowledge
+    # COMBINED PROMPT BUILDER
     # ──────────────────────────────────────────────────
-    def _generate_from_llm_knowledge(
+    def _build_combined_prompt(
         self,
         question: str,
+        qdrant_sources: list,
+        web_sources: list,
         jurisdiction: Optional[str],
         topic: Optional[str],
-    ) -> Dict:
-        prompt = build_llm_knowledge_prompt(
-            question=question,
-            jurisdiction=jurisdiction or "Central",
-            topic=topic or "employment law",
+    ) -> str:
+        """
+        Build one prompt that includes:
+        - Retrieved documents (if any)
+        - Web search results (if any)
+        - Instructions to use LLM knowledge too
+        """
+
+        parts = []
+
+        parts.append(
+            "You are LaborLens. Answer the following "
+            "question using ALL available information.\n"
         )
 
-        try:
-            answer = self.llm.generate(
-                prompt=prompt,
-                temperature=0.3,
+        # add Qdrant documents
+        if qdrant_sources:
+            parts.append(
+                "═══ INDEXED LEGAL DOCUMENTS ═══\n"
+                "(From our verified legal document database)\n"
             )
-        except Exception as e:
-            logger.error(f"LLM knowledge error: {e}")
-            answer = (
-                "I encountered an error. "
-                "Please try rephrasing your question."
+            for i, src in enumerate(qdrant_sources, 1):
+                parts.append(
+                    f"[Document {i}]\n"
+                    f"Law: {src.get('law_name', 'Unknown')}\n"
+                    f"Jurisdiction: "
+                    f"{src.get('jurisdiction', 'Unknown')}\n"
+                    f"Agency: "
+                    f"{src.get('agency', 'Unknown')}\n"
+                    f"Relevance: "
+                    f"{src.get('score', 0):.0%}\n\n"
+                    f"{src.get('text', '')}\n"
+                )
+        else:
+            parts.append(
+                "═══ NO INDEXED DOCUMENTS FOUND ═══\n"
+                "Our database did not have matching "
+                "documents for this question.\n"
             )
 
-        return {
-            "answer": answer,
-            "sources": [],
-            "web_sources": [],
-            "jurisdiction": jurisdiction,
-            "topic": topic,
-            "has_results": False,
-            "answer_source": "llm_knowledge",
-            "is_low_confidence": True,
-            "disclaimer": DISCLAIMER,
-        }
+        # add web search results
+        if web_sources:
+            parts.append(
+                "\n═══ WEB SEARCH RESULTS ═══\n"
+                "(From live internet search)\n"
+            )
+            for i, ws in enumerate(web_sources, 1):
+                parts.append(
+                    f"[Web Result {i}]\n"
+                    f"Title: "
+                    f"{ws.get('title', 'Unknown')}\n"
+                    f"URL: {ws.get('url', '')}\n"
+                    f"Content: "
+                    f"{ws.get('content', '')}\n"
+                )
+
+        # add instructions
+        parts.append(f"""
+═══ YOUR TASK ═══
+
+USER QUESTION: {question}
+
+INSTRUCTIONS:
+1. Use the indexed legal documents as PRIMARY source (most trusted)
+2. Use web search results as SECONDARY source (current info)
+3. Use your own training knowledge as TERTIARY source (fill gaps)
+4. If the question is about a topic NOT covered by documents (like another country), use your knowledge and say so clearly
+5. ALWAYS give a helpful, complete answer - never say "I cannot answer"
+6. Show which information came from which source
+7. Be specific with numbers, dates, and provisions
+8. If the question mentions a country or topic outside Indian law, answer it using your knowledge
+
+FORMAT:
+
+**Answer:**
+[Complete answer combining all sources]
+
+**Key Details:**
+[Bullet points with specifics]
+
+**Sources Used:**
+[Which info came from: 📄 Documents / 🌐 Web Search / 🧠 AI Knowledge]
+
+**Legal Basis:**
+[Relevant laws and jurisdictions]
+
+**Important Note:**
+[Caveats, verify recommendations]
+
+---
+*Not legal advice. Consult a qualified lawyer.*
+""")
+
+        return "\n".join(parts)
 
     # ──────────────────────────────────────────────────
     # COMPARISON
@@ -377,7 +407,8 @@ class LegalRAGPipeline:
     ) -> Dict:
 
         logger.info(
-            f"Comparison: {jurisdiction1} vs {jurisdiction2}"
+            f"Comparison: {jurisdiction1} vs "
+            f"{jurisdiction2}"
         )
 
         result1 = self.run(
@@ -417,7 +448,9 @@ class LegalRAGPipeline:
             "disclaimer": DISCLAIMER,
         }
 
-    def _error_response(self, message, jurisdiction, topic):
+    def _error_response(
+        self, message, jurisdiction, topic
+    ):
         return {
             "answer": message,
             "sources": [],

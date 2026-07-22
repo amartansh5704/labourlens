@@ -508,6 +508,8 @@ if page == "💬 Chat":
                     "🔵 From live web search",
                 "llm_knowledge":
                     "🟡 From AI general knowledge",
+                "all_sources":
+                    "🟢 From documents + 🌐 web + 🧠 AI knowledge",
             }
             badge = badges.get(
                 result.get("answer_source", ""), ""
