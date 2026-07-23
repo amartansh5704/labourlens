@@ -394,35 +394,40 @@ class LegalRAGPipeline:
 === CURRENT QUESTION ===
 {question}
 
-=== STRICT OUTPUT FORMAT ===
-You MUST respond in EXACTLY this structure.
-No other format is acceptable.
+=== OUTPUT FORMAT ===
+Respond in EXACTLY this structure:
 
-ANSWER: [1-2 sentences maximum. Direct answer only. No preamble.]
+ANSWER: [Answer here - length depends on question complexity]
 
 KEY_DETAILS:
-- [Specific fact with number/date from documents or knowledge]
-- [Second key point if truly important]
-- [Maximum 3 bullets total]
+- [Specific fact with number/date]
+- [Add more bullets if question needs detail]
+- [No limit on bullets if user asks for details]
 
 SOURCES_USED:
 - [📄 Document name if used]
-- [🌐 Web source title if used]
-- [🧠 AI knowledge if used for gaps]
+- [🌐 Web source if used]
+- [🧠 AI knowledge if used]
 
-LEGAL_BASIS: [Law name • Jurisdiction • Year if known]
+LEGAL_BASIS: [Law name • Jurisdiction • Year]
 
-=== RULES YOU MUST FOLLOW ===
-1. ANSWER section: 1-2 sentences ONLY, no exceptions
-2. Only state specific numbers that appear in documents above
-3. If number not in documents: write "verify at official source"
-4. If user refers to previous messages: acknowledge it briefly in ANSWER
-5. If about non-Indian law: use your training knowledge, label it [🧠 Knowledge]
+=== LENGTH GUIDE ===
+- "What is X?" → ANSWER is 1 sentence
+- "How does X work?" → ANSWER is 2-3 sentences
+- "Explain X" or "Tell me about X" → ANSWER is 1 paragraph
+- "Give details" or "More info" or "Elaborate" → ANSWER is full detailed paragraph
+- "Compare X and Y" → ANSWER covers both with comparison
+- Follow-up questions → expand on previous answer context
+
+=== STRICT RULES ===
+1. Match answer length to question complexity
+2. Only state numbers found in documents above
+3. If number not in docs: write "verify at official source"
+4. If user refers to previous messages: acknowledge and build on it
+5. If about non-Indian law: use your knowledge, label [🧠]
 6. Never invent section numbers or rates
-7. Never say "based on the documents provided"
-8. Never use headers inside ANSWER section
-9. Keep TOTAL response under 120 words
-10. Always complete all 4 sections: ANSWER, KEY_DETAILS, SOURCES_USED, LEGAL_BASIS""")
+7. Always complete all 4 sections
+8. KEY_DETAILS can have as many bullets as needed for the question""")
 
         return "\n".join(sections)
 
