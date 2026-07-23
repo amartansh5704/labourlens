@@ -435,6 +435,7 @@ def _render_assistant_message(
 # ─────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="⏳ Loading AI model...")
 def load_pipeline():
+    _version = "v2"
     return LegalRAGPipeline()
 
 
