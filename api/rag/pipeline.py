@@ -326,110 +326,18 @@ class LegalRAGPipeline:
         topic: Optional[str],
         chat_history: List[Dict] = None,
     ) -> str:
+        """
+        Uses smart prompt builder that picks
+        the right format based on question type
+        """
+        from api.rag.prompts import build_prompt
 
-        sections = []
-
-        # ── Conversation history ───────────────────────
-        if chat_history:
-            sections.append(
-                "=== CONVERSATION HISTORY ==="
-            )
-            # last 6 messages only to save tokens
-            recent = chat_history[-6:]
-            for msg in recent:
-                role = msg.get("role", "")
-                content = str(
-                    msg.get("content", "")
-                )[:200]
-                if role == "user":
-                    sections.append(f"User: {content}")
-                elif role == "assistant":
-                    # only first line of assistant msg
-                    first_line = content.split(
-                        "\n"
-                    )[0][:150]
-                    sections.append(
-                        f"Assistant: {first_line}"
-                    )
-            sections.append("")
-
-        # ── Qdrant documents ───────────────────────────
-        if qdrant_sources:
-            sections.append(
-                "=== INDEXED LEGAL DOCUMENTS ==="
-            )
-            for i, src in enumerate(
-                qdrant_sources[:3], 1
-            ):
-                sections.append(
-                    f"[Doc {i}] "
-                    f"{src.get('law_name','Unknown')} "
-                    f"({src.get('jurisdiction','')}):\n"
-                    f"{src.get('text','')[:350]}"
-                )
-        else:
-            sections.append(
-                "=== DOCUMENTS ===\n"
-                "No matching Indian law documents found."
-            )
-
-        # ── Web results ────────────────────────────────
-        if web_sources:
-            sections.append(
-                "\n=== WEB SEARCH RESULTS ==="
-            )
-            for i, ws in enumerate(web_sources[:2], 1):
-                sections.append(
-                    f"[Web {i}] "
-                    f"{ws.get('title','')}:\n"
-                    f"{ws.get('content','')[:250]}"
-                )
-        else:
-            sections.append(
-                "\n=== WEB SEARCH ===\nNo results."
-            )
-
-        # ── Strict instructions ───────────────────────
-        sections.append(f"""
-=== CURRENT QUESTION ===
-{question}
-
-=== OUTPUT FORMAT ===
-Respond in EXACTLY this structure:
-
-ANSWER: [Answer here - length depends on question complexity]
-
-KEY_DETAILS:
-- [Specific fact with number/date]
-- [Add more bullets if question needs detail]
-- [No limit on bullets if user asks for details]
-
-SOURCES_USED:
-- [📄 Document name if used]
-- [🌐 Web source if used]
-- [🧠 AI knowledge if used]
-
-LEGAL_BASIS: [Law name • Jurisdiction • Year]
-
-=== LENGTH GUIDE ===
-- "What is X?" → ANSWER is 1 sentence
-- "How does X work?" → ANSWER is 2-3 sentences
-- "Explain X" or "Tell me about X" → ANSWER is 1 paragraph
-- "Give details" or "More info" or "Elaborate" → ANSWER is full detailed paragraph
-- "Compare X and Y" → ANSWER covers both with comparison
-- Follow-up questions → expand on previous answer context
-
-=== STRICT RULES ===
-1. Match answer length to question complexity
-2. Only state numbers found in documents above
-3. If number not in docs: write "verify at official source"
-4. If user refers to previous messages: acknowledge and build on it
-5. If about non-Indian law: use your knowledge, label [🧠]
-6. Never invent section numbers or rates
-7. Always complete all 4 sections
-8. KEY_DETAILS can have as many bullets as needed for the question""")
-
-        return "\n".join(sections)
+        return build_prompt(
+            question=question,
+            qdrant_sources=qdrant_sources,
+            web_sources=web_sources,
+            chat_history=chat_history or [],
+        )
 
     # ══════════════════════════════════════════════════
     # COMPARISON

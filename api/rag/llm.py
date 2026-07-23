@@ -20,13 +20,31 @@ class GroqLLM:
     def generate(
         self,
         prompt: str,
-        temperature: float = 0.30,
+        temperature: float = 0.15,
         max_tokens: Optional[int] = None,
     ) -> str:
         try:
+            # detect if this is a detailed request
+            # give more tokens for detailed answers
+            is_detailed = (
+                "DETAILED" in prompt or
+                "comprehensive" in prompt.lower() or
+                "thoroughly" in prompt.lower() or
+                "elaborate" in prompt.lower() or
+                "in depth" in prompt.lower() or
+                "step by step" in prompt.lower()
+            )
+
+            token_limit = (
+                2048 if is_detailed
+                else max_tokens or 800
+            )
+
             logger.debug(
                 f"Groq request: {len(prompt)} chars "
-                f"temp={temperature}"
+                f"| temp={temperature} "
+                f"| tokens={token_limit} "
+                f"| detailed={is_detailed}"
             )
 
             response = self.client.chat.completions.create(
@@ -41,17 +59,17 @@ class GroqLLM:
                         "content": prompt
                     }
                 ],
-                max_tokens=max_tokens or 512,
+                max_tokens=token_limit,
                 temperature=temperature,
-                top_p=0.9,          # reduce randomness
-                frequency_penalty=0.3,
+                top_p=0.9,
+                frequency_penalty=0.1,
             )
 
             answer = response.choices[0].message.content
             logger.debug(
                 f"Groq response: {len(answer)} chars"
             )
-            return answer
+            return answer.strip()
 
         except Exception as e:
             logger.error(f"Groq error: {e}")
