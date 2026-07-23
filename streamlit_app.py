@@ -520,14 +520,26 @@ if page == "💬 Chat":
             st.markdown(result["answer"])
 
             sources = result.get("sources", [])
-            if sources:
-                _render_sources(sources)
+        user_wants_sources = any(
+            word in question.lower()
+            for word in [
+                "source", "sources", "reference",
+                "where", "citation", "proof",
+                "evidence", "link", "url",
+                "which law", "what law",
+                "show me", "tell me more",
+                "details", "detail",
+            ]
+        )
 
-            if result.get("is_low_confidence"):
-                st.warning(
-                    "⚠️ Low confidence. "
-                    "Verify with official sources."
-                )
+        if sources and user_wants_sources:
+            _render_sources(sources)
+        elif sources:
+            # show subtle hint instead of full sources
+            st.caption(
+                f"📚 {len(sources)} sources available. "
+                f"Ask 'show sources' to see them."
+            )
 
             st.caption(
                 "⚠️ Not legal advice. "

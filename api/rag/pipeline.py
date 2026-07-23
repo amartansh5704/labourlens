@@ -158,7 +158,7 @@ class LegalRAGPipeline:
         try:
             answer = self.llm.generate(
                 prompt=prompt,
-                temperature=0.3
+                temperature=0.15
             )
             logger.info("Answer generated successfully")
         except Exception as e:
@@ -351,10 +351,8 @@ class LegalRAGPipeline:
         topic: Optional[str],
     ) -> str:
         """
-        Builds one comprehensive prompt combining:
-        - Indexed legal documents
-        - Web search results
-        - Instructions to use LLM knowledge too
+        Build precise, anti-hallucination prompt.
+    Forces short answers and honest uncertainty.
         """
 
         sections = []
@@ -406,56 +404,19 @@ class LegalRAGPipeline:
         sections.append(f"""
 === YOUR INSTRUCTIONS ===
 
-QUESTION FROM USER: {question}
+QUESTION: {question}
 
-You MUST follow these rules:
+STRICT RULES FOR YOUR ANSWER:
+1. Answer in 2-3 sentences MAXIMUM
+2. Only state numbers/rates that appear in the documents above
+3. If the exact number is not in documents, say "approximately X" or "check official source for current rate"
+4. Do NOT list bullet points unless asked
+5. Do NOT use headers
+6. Do NOT say "based on the documents provided" - just answer
+7. If about another country, answer briefly from your knowledge
+8. End with the law name and jurisdiction in parentheses
 
-RULE 1 - ALWAYS ANSWER COMPLETELY
-Never say "outside my expertise" or "I cannot answer this"
-Always provide helpful information on ANY topic
-
-RULE 2 - USE ALL SOURCES
-- Use indexed documents for Indian law specifics
-- Use web results for current rates and other countries
-- Use YOUR OWN TRAINING KNOWLEDGE to fill any gaps
-
-RULE 3 - FOR NON-INDIAN QUESTIONS
-If the question is about Australia, USA, UK, or any other country:
-- Answer it directly from your training knowledge RIGHT NOW
-- Do NOT say the documents do not cover it
-- Give specific details: laws, hours, rates, regulations
-
-RULE 4 - COMBINE EVERYTHING
-Give ONE comprehensive answer that covers:
-- What the documents say (if relevant)
-- What web results say (if found)
-- What you know from training (always)
-
-RULE 5 - BE SPECIFIC
-Give actual numbers, law names, dates
-Not vague statements
-
-FORMAT YOUR ANSWER:
-
-**Answer:**
-[Complete answer - cover ALL aspects of the question]
-
-**Key Details:**
-- [Specific fact 1 with source label]
-- [Specific fact 2 with source label]
-- [Specific fact 3 with source label]
-
-**Sources Used:**
-- 📄 Indian Documents: [what was found]
-- 🌐 Web Search: [what was found]
-- 🧠 AI Knowledge: [what you added from training]
-
-**Legal Basis:**
-[Relevant laws with jurisdictions]
-
----
-*Not legal advice. Consult a qualified lawyer.*
-""")
+ANSWER (2-3 sentences only):""")
 
         return "\n".join(sections)
 

@@ -41,8 +41,10 @@ class GroqLLM:
                         "content": prompt
                     }
                 ],
-                max_tokens=max_tokens or self.max_tokens,
+                max_tokens=max_tokens or 512,
                 temperature=temperature,
+                top_p=0.9,          # reduce randomness
+                frequency_penalty=0.3,
             )
 
             answer = response.choices[0].message.content
