@@ -1,6 +1,7 @@
 # streamlit_app.py
 # Full LaborLens for Streamlit Cloud deployment
-# All helper functions defined before use
+# Conversation memory + short expandable answers
+# Sources only when asked
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -38,7 +39,7 @@ def load_secrets():
 load_secrets()
 
 # ─────────────────────────────────────────────────────────
-# INITIALIZE DATABASE (create tables if missing)
+# INITIALIZE DATABASE
 # ─────────────────────────────────────────────────────────
 from database.connection import init_db
 init_db()
@@ -53,7 +54,7 @@ from database.models import Document
 from qdrant_client import QdrantClient
 
 # ─────────────────────────────────────────────────────────
-# HELPER FUNCTIONS - defined before any page code
+# HELPER FUNCTIONS - all defined before page code
 # ─────────────────────────────────────────────────────────
 
 def _get_qdrant_count() -> int:
@@ -84,83 +85,11 @@ def _get_qdrant_count() -> int:
         return 0
 
 
-def _render_sources(sources: list):
-    """Render source documents in expandable panel"""
-    if not sources:
-        return
-
-    with st.expander(
-        f"📚 View {len(sources)} "
-        f"Source{'s' if len(sources) > 1 else ''}"
-    ):
-        for i, source in enumerate(sources, 1):
-            law_name = (
-                source.get("law_name") or "Unknown Law"
-            )
-            score = source.get("score", 0)
-
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown(f"**{i}. {law_name}**")
-            with col2:
-                score_emoji = (
-                    "🟢" if score > 0.7 else
-                    "🟡" if score > 0.5 else
-                    "🟠"
-                )
-                st.markdown(f"{score_emoji} `{score:.2f}`")
-
-            meta_cols = st.columns(3)
-            with meta_cols[0]:
-                if source.get("jurisdiction"):
-                    st.markdown(
-                        f"🏛️ **{source['jurisdiction']}**"
-                    )
-            with meta_cols[1]:
-                if source.get("effective_date"):
-                    st.markdown(
-                        f"📅 {source['effective_date']}"
-                    )
-            with meta_cols[2]:
-                agency = source.get("agency", "")
-                if agency:
-                    display_agency = (
-                        f"{agency[:25]}..."
-                        if len(agency) > 25
-                        else agency
-                    )
-                    st.markdown(f"🏢 {display_agency}")
-
-            text = source.get("text", "")
-            if text:
-                st.markdown("**Relevant passage:**")
-                display_text = (
-                    text[:500] + "..."
-                    if len(text) > 500
-                    else text
-                )
-                st.info(display_text)
-
-            url = source.get("source_url", "")
-            if url and url.startswith("http"):
-                st.markdown(
-                    f"[🔗 View Original Source]({url})"
-                )
-
-            if i < len(sources):
-                st.divider()
-
-# Add this function next to _get_qdrant_count and _render_sources
-
 def _get_documents_from_qdrant(
     jurisdiction_filter: str = "All",
     topic_filter: str = None,
 ) -> list:
-    """
-    Get unique documents from Qdrant payloads.
-    Since SQLite is empty on cloud, we extract
-    document metadata from Qdrant chunk payloads.
-    """
+    """Get unique documents from Qdrant payloads"""
     try:
         qdrant_host = os.getenv("QDRANT_HOST", "")
         qdrant_key = os.getenv("QDRANT_API_KEY", "")
@@ -181,7 +110,6 @@ def _get_documents_from_qdrant(
                 port=int(os.getenv("QDRANT_PORT", 6333))
             )
 
-        # build filter
         from qdrant_client.models import (
             Filter, FieldCondition, MatchValue
         )
@@ -208,11 +136,10 @@ def _get_documents_from_qdrant(
             )
 
         scroll_filter = (
-            Filter(must=conditions) if conditions
-            else None
+            Filter(must=conditions)
+            if conditions else None
         )
 
-        # scroll through all points to get payloads
         all_points = []
         offset = None
 
@@ -225,23 +152,18 @@ def _get_documents_from_qdrant(
                 with_payload=True,
                 with_vectors=False,
             )
-
             all_points.extend(results)
-
             if next_offset is None:
                 break
             offset = next_offset
 
-        # extract unique documents from chunk payloads
         seen_docs = {}
-
         for point in all_points:
             payload = point.payload or {}
             doc_id = payload.get(
                 "document_id",
                 payload.get("source_url", "unknown")
             )
-
             if doc_id not in seen_docs:
                 seen_docs[doc_id] = {
                     "id": doc_id,
@@ -271,19 +193,14 @@ def _get_documents_from_qdrant(
                         "text", ""
                     )[:300],
                 }
-
-            # count chunks per document
             seen_docs[doc_id]["chunk_count"] += 1
 
-        # sort by jurisdiction then law name
         documents = sorted(
             seen_docs.values(),
             key=lambda d: (
-                d["jurisdiction"],
-                d["law_name"]
+                d["jurisdiction"], d["law_name"]
             )
         )
-
         return documents
 
     except Exception as e:
@@ -291,8 +208,230 @@ def _get_documents_from_qdrant(
         return []
 
 
+def _render_sources(sources: list):
+    """Render source documents panel"""
+    if not sources:
+        return
+
+    for i, source in enumerate(sources, 1):
+        law_name = (
+            source.get("law_name") or "Unknown Law"
+        )
+        score = source.get("score", 0)
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**{i}. {law_name}**")
+        with col2:
+            score_emoji = (
+                "🟢" if score > 0.7 else
+                "🟡" if score > 0.5 else
+                "🟠"
+            )
+            st.markdown(f"{score_emoji} `{score:.2f}`")
+
+        meta_cols = st.columns(3)
+        with meta_cols[0]:
+            if source.get("jurisdiction"):
+                st.markdown(
+                    f"🏛️ **{source['jurisdiction']}**"
+                )
+        with meta_cols[1]:
+            if source.get("effective_date"):
+                st.markdown(
+                    f"📅 {source['effective_date']}"
+                )
+        with meta_cols[2]:
+            agency = source.get("agency", "")
+            if agency:
+                st.markdown(
+                    f"🏢 {agency[:25]}..."
+                    if len(agency) > 25
+                    else f"🏢 {agency}"
+                )
+
+        text = source.get("text", "")
+        if text:
+            st.info(
+                text[:400] + "..."
+                if len(text) > 400 else text
+            )
+
+        url = source.get("source_url", "")
+        if url and url.startswith("http"):
+            st.markdown(
+                f"[🔗 View Source]({url})"
+            )
+
+        if i < len(sources):
+            st.divider()
+
+
+def _parse_structured_answer(answer: str) -> dict:
+    """
+    Parse structured LLM response into sections.
+    Extracts ANSWER, KEY_DETAILS, SOURCES_USED, LEGAL_BASIS
+    """
+    result = {
+        "answer": "",
+        "key_details": [],
+        "sources_used": [],
+        "legal_basis": "",
+        "raw": answer
+    }
+
+    lines = answer.strip().split("\n")
+    current_section = None
+
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+
+        if line_stripped.startswith("ANSWER:"):
+            current_section = "answer"
+            text = line_stripped.replace(
+                "ANSWER:", ""
+            ).strip()
+            if text:
+                result["answer"] = text
+
+        elif line_stripped.startswith("KEY_DETAILS:"):
+            current_section = "key_details"
+
+        elif line_stripped.startswith("SOURCES_USED:"):
+            current_section = "sources_used"
+
+        elif line_stripped.startswith("LEGAL_BASIS:"):
+            current_section = "legal_basis"
+            text = line_stripped.replace(
+                "LEGAL_BASIS:", ""
+            ).strip()
+            if text:
+                result["legal_basis"] = text
+
+        elif current_section == "answer":
+            if result["answer"]:
+                result["answer"] += " " + line_stripped
+            else:
+                result["answer"] = line_stripped
+
+        elif (
+            current_section == "key_details" and
+            line_stripped.startswith("-")
+        ):
+            detail = line_stripped.lstrip("- ").strip()
+            if detail:
+                result["key_details"].append(detail)
+
+        elif (
+            current_section == "sources_used" and
+            line_stripped.startswith("-")
+        ):
+            src = line_stripped.lstrip("- ").strip()
+            if src:
+                result["sources_used"].append(src)
+
+        elif current_section == "legal_basis":
+            if result["legal_basis"]:
+                result["legal_basis"] += (
+                    " " + line_stripped
+                )
+            else:
+                result["legal_basis"] = line_stripped
+
+    # fallback if parsing fails
+    if not result["answer"]:
+        result["answer"] = answer
+
+    return result
+
+
+def _user_wants_sources(question: str) -> bool:
+    """Check if user is asking for sources"""
+    trigger_words = [
+        "source", "sources", "reference", "references",
+        "where", "citation", "citations", "proof",
+        "evidence", "link", "links", "url",
+        "which law", "what law", "show me",
+        "show sources", "tell me more",
+        "details", "detail", "more info",
+    ]
+    q_lower = question.lower()
+    return any(word in q_lower for word in trigger_words)
+
+
+def _render_assistant_message(
+    raw_answer: str,
+    sources: list,
+    answer_source: str,
+    question: str = "",
+):
+    """
+    Render assistant answer with:
+    - Short direct answer (always visible)
+    - Expandable key details
+    - Expandable legal basis
+    - Sources only when user asks
+    """
+
+    # source badge
+    badges = {
+        "indexed_documents": "🟢 Documents",
+        "web_search": "🔵 Web",
+        "llm_knowledge": "🟡 AI",
+        "all_sources": "🟢📄 + 🌐 + 🧠",
+        "error": "🔴 Error",
+    }
+    badge = badges.get(answer_source, "")
+    if badge:
+        st.caption(badge)
+
+    # parse structured response
+    parsed = _parse_structured_answer(raw_answer)
+
+    # ── Main answer always visible ─────────────────
+    main_answer = parsed["answer"] or raw_answer
+    st.markdown(main_answer)
+
+    # ── Key details expander ───────────────────────
+    if parsed["key_details"]:
+        with st.expander("📋 Key Details"):
+            for detail in parsed["key_details"]:
+                st.markdown(f"• {detail}")
+
+    # ── Legal basis expander ───────────────────────
+    if parsed["legal_basis"]:
+        with st.expander("⚖️ Legal Basis"):
+            st.markdown(parsed["legal_basis"])
+
+    # ── Sources expander ───────────────────────────
+    if sources:
+        wants_sources = _user_wants_sources(question)
+        if wants_sources or parsed["sources_used"]:
+            with st.expander(
+                f"📚 Sources ({len(sources)})"
+            ):
+                if parsed["sources_used"]:
+                    st.markdown("**Sources used:**")
+                    for s in parsed["sources_used"]:
+                        st.markdown(f"• {s}")
+                    st.divider()
+                _render_sources(sources)
+        else:
+            st.caption(
+                f"📚 {len(sources)} sources · "
+                f"Ask 'show sources' to see them"
+            )
+
+    # disclaimer
+    st.caption(
+        "⚠️ Not legal advice. Consult a lawyer."
+    )
+
+
 # ─────────────────────────────────────────────────────────
-# LOAD PIPELINE - cached so model loads only once
+# LOAD PIPELINE
 # ─────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="⏳ Loading AI model...")
 def load_pipeline():
@@ -345,8 +484,10 @@ st.markdown("""
     <p style="margin:0; color:white; opacity:0.9;">
         Indian Employment Law Compliance Assistant
     </p>
-    <p style="margin:0; font-size:0.85rem; color:white; opacity:0.7;">
-        Powered by RAG • Groq Llama 3.3 70B • Real Legal Documents
+    <p style="margin:0; font-size:0.85rem;
+       color:white; opacity:0.7;">
+        Powered by RAG • Groq Llama 3.3 70B •
+        Real Legal Documents
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -354,8 +495,8 @@ st.markdown("""
 st.markdown("""
 <div class="disclaimer">
 ⚠️ <strong>Disclaimer:</strong>
-LaborLens provides information for educational purposes only.
-This is NOT legal advice. Laws change frequently.
+LaborLens provides information for educational
+purposes only. This is NOT legal advice.
 Always consult a qualified employment lawyer.
 </div>
 """, unsafe_allow_html=True)
@@ -382,7 +523,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # filters only for chat page
     if page == "💬 Chat":
         st.markdown("## ⚙️ Filters")
 
@@ -418,6 +558,7 @@ with st.sidebar:
         if st.button("🗑️ Clear Chat History"):
             st.session_state.messages = []
             st.rerun()
+
     else:
         jurisdiction = "All"
         selected_topic_label = "All"
@@ -458,26 +599,42 @@ if page == "💬 Chat":
         filter_parts.append(f"📋 {selected_topic_label}")
     if filter_parts:
         st.caption(
-            "Active filters: " + " | ".join(filter_parts)
+            "Filters: " + " | ".join(filter_parts)
         )
 
     # display existing messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if message.get("sources"):
-                _render_sources(message["sources"])
+            if message["role"] == "user":
+                st.markdown(message["content"])
+            else:
+                _render_assistant_message(
+                    raw_answer=message.get(
+                        "content", ""
+                    ),
+                    sources=message.get("sources", []),
+                    answer_source=message.get(
+                        "answer_source", ""
+                    ),
+                    question=message.get(
+                        "question", ""
+                    ),
+                )
 
-    # handle example question from sidebar
+    # handle input
     question = None
     if "example_question" in st.session_state:
-        question = st.session_state.pop("example_question")
+        question = st.session_state.pop(
+            "example_question"
+        )
     else:
         question = st.chat_input(
-            "Ask a compliance question..."
+            "Ask a compliance question... "
+            "e.g. What is minimum wage in Delhi?"
         )
 
     if question:
+        # show user message
         with st.chat_message("user"):
             st.markdown(question)
 
@@ -486,10 +643,19 @@ if page == "💬 Chat":
             "content": question,
         })
 
+        # build chat history for memory
+        # last 6 messages excluding current question
+        chat_history = [
+            {
+                "role": m["role"],
+                "content": m["content"]
+            }
+            for m in st.session_state.messages[:-1]
+        ]
+
+        # get answer
         with st.chat_message("assistant"):
-            with st.spinner(
-                "🔍 Searching legal documents..."
-            ):
+            with st.spinner("🔍 Searching..."):
                 result = pipeline.run(
                     question=question,
                     jurisdiction=(
@@ -498,58 +664,27 @@ if page == "💬 Chat":
                     ),
                     topic=topic,
                     top_k=top_k,
+                    chat_history=chat_history,
                 )
 
-            # answer source badge
-            badges = {
-                "indexed_documents":
-                    "🟢 From indexed legal documents",
-                "web_search":
-                    "🔵 From live web search",
-                "llm_knowledge":
-                    "🟡 From AI general knowledge",
-                "all_sources":
-                    "🟢 From documents + 🌐 web + 🧠 AI knowledge",
-            }
-            badge = badges.get(
-                result.get("answer_source", ""), ""
-            )
-            if badge:
-                st.caption(badge)
-
-            st.markdown(result["answer"])
-
-            sources = result.get("sources", [])
-        user_wants_sources = any(
-            word in question.lower()
-            for word in [
-                "source", "sources", "reference",
-                "where", "citation", "proof",
-                "evidence", "link", "url",
-                "which law", "what law",
-                "show me", "tell me more",
-                "details", "detail",
-            ]
-        )
-
-        if sources and user_wants_sources:
-            _render_sources(sources)
-        elif sources:
-            # show subtle hint instead of full sources
-            st.caption(
-                f"📚 {len(sources)} sources available. "
-                f"Ask 'show sources' to see them."
+            _render_assistant_message(
+                raw_answer=result.get("answer", ""),
+                sources=result.get("sources", []),
+                answer_source=result.get(
+                    "answer_source", ""
+                ),
+                question=question,
             )
 
-            st.caption(
-                "⚠️ Not legal advice. "
-                "Consult a qualified lawyer."
-            )
-
+        # save to history
         st.session_state.messages.append({
             "role": "assistant",
-            "content": result["answer"],
+            "content": result.get("answer", ""),
             "sources": result.get("sources", []),
+            "answer_source": result.get(
+                "answer_source", ""
+            ),
+            "question": question,
         })
 
 
@@ -620,9 +755,14 @@ elif page == "⚖️ Compare Jurisdictions":
             st.markdown(f"### 📍 {j1}")
             j1d = comparison.get(j1, {})
             if j1d.get("has_results"):
-                st.markdown(j1d.get("answer", ""))
-                if j1d.get("sources"):
-                    _render_sources(j1d["sources"])
+                _render_assistant_message(
+                    raw_answer=j1d.get("answer", ""),
+                    sources=j1d.get("sources", []),
+                    answer_source=j1d.get(
+                        "answer_source", ""
+                    ),
+                    question=cmp_question,
+                )
             else:
                 st.warning(f"No data for {j1}")
 
@@ -630,15 +770,16 @@ elif page == "⚖️ Compare Jurisdictions":
             st.markdown(f"### 📍 {j2}")
             j2d = comparison.get(j2, {})
             if j2d.get("has_results"):
-                st.markdown(j2d.get("answer", ""))
-                if j2d.get("sources"):
-                    _render_sources(j2d["sources"])
+                _render_assistant_message(
+                    raw_answer=j2d.get("answer", ""),
+                    sources=j2d.get("sources", []),
+                    answer_source=j2d.get(
+                        "answer_source", ""
+                    ),
+                    question=cmp_question,
+                )
             else:
                 st.warning(f"No data for {j2}")
-
-        st.caption(
-            "⚠️ Not legal advice. Consult a lawyer."
-        )
 
     if j1 == j2:
         st.warning("Select two different jurisdictions")
@@ -653,15 +794,13 @@ elif page == "📂 Document Browser":
     st.markdown("Browse all indexed legal documents.")
     st.markdown("---")
 
-    # show total vectors
     vec_count = _get_qdrant_count()
     if vec_count > 0:
         st.success(
-            f"✅ **{vec_count} law passages** indexed "
-            f"in Qdrant Cloud"
+            f"✅ **{vec_count} law passages** "
+            f"indexed in Qdrant Cloud"
         )
 
-    # filters
     col1, col2 = st.columns(2)
 
     with col1:
@@ -686,23 +825,22 @@ elif page == "📂 Document Browser":
                 )
             ]
 
-    # get documents from Qdrant
-    with st.spinner("Loading documents from Qdrant..."):
+    with st.spinner("Loading from Qdrant..."):
         documents = _get_documents_from_qdrant(
             jurisdiction_filter=j_filter,
             topic_filter=t_filter,
         )
 
     st.markdown(
-        f"**{len(documents)} documents found | "
+        f"**{len(documents)} documents | "
         f"{vec_count} total chunks**"
     )
     st.markdown("---")
 
     if not documents:
         st.info(
-            "No documents found for this filter. "
-            "Try selecting 'All' for both filters."
+            "No documents found. "
+            "Try 'All' for both filters."
         )
     else:
         for doc in documents:
@@ -711,21 +849,25 @@ elif page == "📂 Document Browser":
                 doc.get("title") or
                 "Untitled"
             )
-            jurisdiction = doc.get("jurisdiction", "")
+            jurisdiction_doc = doc.get(
+                "jurisdiction", ""
+            )
             chunk_count = doc.get("chunk_count", 0)
             topic_key = doc.get("topic", "")
-            topic_name = TOPICS.get(topic_key, topic_key)
+            topic_name = TOPICS.get(
+                topic_key, topic_key
+            )
 
             with st.expander(
-                f"✅ {jurisdiction} | "
+                f"✅ {jurisdiction_doc} | "
                 f"{law_name[:50]} | "
                 f"{chunk_count} chunks"
             ):
-                # metrics row
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     st.metric(
-                        "Jurisdiction", jurisdiction
+                        "Jurisdiction",
+                        jurisdiction_doc
                     )
                 with c2:
                     st.metric(
@@ -739,7 +881,6 @@ elif page == "📂 Document Browser":
                     ).upper()
                     st.metric("Type", file_type)
 
-                # details
                 if doc.get("law_name"):
                     st.markdown(
                         f"**📜 Law:** {doc['law_name']}"
@@ -759,21 +900,19 @@ elif page == "📂 Document Browser":
                         f"{doc['document_type'].title()}"
                     )
 
-                # sample text
                 sample = doc.get("sample_text", "")
                 if sample:
-                    st.markdown("**📝 Content Preview:**")
+                    st.markdown("**📝 Preview:**")
                     st.info(
                         sample + "..."
                         if len(sample) >= 295
                         else sample
                     )
 
-                # source link
                 url = doc.get("source_url", "")
                 if url and url.startswith("http"):
                     st.markdown(
-                        f"[🔗 View Original Source]({url})"
+                        f"[🔗 View Source]({url})"
                     )
 
 
@@ -786,11 +925,8 @@ elif page == "📊 Statistics":
     st.markdown("---")
 
     vec_count = _get_qdrant_count()
-
-    # get documents from Qdrant for stats
     all_docs = _get_documents_from_qdrant()
 
-    # calculate stats from Qdrant documents
     total_docs = len(all_docs)
     total_chunks = sum(
         d.get("chunk_count", 0) for d in all_docs
@@ -812,14 +948,13 @@ elif page == "📊 Statistics":
         ])
         by_topic[t] = count
 
-    # top metrics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📄 Documents", total_docs)
     with col2:
-        st.metric("✅ All Indexed", total_docs)
+        st.metric("✅ Indexed", total_docs)
     with col3:
-        st.metric("🔢 Total Chunks", total_chunks)
+        st.metric("🔢 Chunks", total_chunks)
     with col4:
         st.metric("🧠 Qdrant Vectors", vec_count)
 
@@ -827,10 +962,11 @@ elif page == "📊 Statistics":
 
     if vec_count > 0:
         st.success(
-            f"✅ **{vec_count}** law passages from "
-            f"**{total_docs}** documents indexed "
-            f"in Qdrant Cloud"
+            f"✅ **{vec_count}** passages from "
+            f"**{total_docs}** documents in Qdrant Cloud"
         )
+    else:
+        st.warning("No vectors in Qdrant.")
 
     col1, col2 = st.columns(2)
 

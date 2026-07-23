@@ -1,8 +1,6 @@
 # api/rag/pipeline.py
-# Smart pipeline - always combines all available sources
-# Tier 1: Qdrant indexed documents
-# Tier 2: Web search (Tavily)
-# Tier 3: LLM general knowledge
+# Smart pipeline with conversation memory
+# Short precise answers with expandable sections
 # ALL tiers contribute to EVERY answer
 
 from api.rag.retriever import LegalRetriever
@@ -10,9 +8,8 @@ from api.rag.llm import GroqLLM
 from api.core.config import settings
 from shared.constants import DISCLAIMER
 from loguru import logger
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
-# try importing optional modules
 try:
     from api.rag.web_search import WebSearcher
     WEB_SEARCH_AVAILABLE = True
@@ -30,23 +27,18 @@ except Exception:
 
 class LegalRAGPipeline:
     """
-    Combined pipeline that uses ALL available sources
-    for every question to give the best possible answer.
-
-    Flow for EVERY question:
-    1. Search Qdrant for relevant indexed documents
-    2. Search web via Tavily for current information
-    3. Build ONE prompt with ALL gathered info
-    4. LLM uses docs + web + own knowledge to answer
+    Combined pipeline with conversation memory.
+    Uses ALL sources every time.
+    Returns short precise structured answers.
     """
 
     def __init__(self):
-        logger.info("Initializing Combined RAG Pipeline...")
+        logger.info("Initializing RAG Pipeline...")
 
         self.retriever = LegalRetriever()
         self.llm = GroqLLM()
 
-        # web search (optional)
+        # web search
         if WEB_SEARCH_AVAILABLE:
             try:
                 self.web_searcher = WebSearcher()
@@ -54,16 +46,18 @@ class LegalRAGPipeline:
                     logger.info("Web search: ENABLED")
                 else:
                     logger.info(
-                        "Web search: DISABLED (no API key)"
+                        "Web search: DISABLED (no key)"
                     )
             except Exception as e:
-                logger.warning(f"Web search init failed: {e}")
+                logger.warning(
+                    f"Web search init failed: {e}"
+                )
                 self.web_searcher = None
         else:
             self.web_searcher = None
             logger.info("Web search: NOT AVAILABLE")
 
-        # reranker (optional)
+        # reranker
         self.reranker = None
         if RERANKER_AVAILABLE:
             try:
@@ -72,12 +66,14 @@ class LegalRAGPipeline:
                 )
                 if enable:
                     self.reranker = LegalReranker()
-                    if self.reranker.enabled:
-                        logger.info("Reranker: ENABLED")
-                    else:
+                    if not self.reranker.enabled:
                         self.reranker = None
+                    else:
+                        logger.info("Reranker: ENABLED")
             except Exception as e:
-                logger.warning(f"Reranker init failed: {e}")
+                logger.warning(
+                    f"Reranker init failed: {e}"
+                )
                 self.reranker = None
 
         logger.info("RAG Pipeline ready")
@@ -91,12 +87,13 @@ class LegalRAGPipeline:
         jurisdiction: Optional[str] = None,
         topic: Optional[str] = None,
         top_k: int = None,
+        chat_history: List[Dict] = None,
     ) -> Dict:
 
         top_k = top_k or settings.TOP_K_RESULTS
         question = question.strip()
+        chat_history = chat_history or []
 
-        # validate
         if not question:
             return self._error_response(
                 "Question cannot be empty",
@@ -115,10 +112,11 @@ class LegalRAGPipeline:
         logger.info(
             f"Pipeline START: '{question[:60]}' "
             f"| jurisdiction={jurisdiction} "
-            f"| topic={topic}"
+            f"| topic={topic} "
+            f"| history={len(chat_history)} msgs"
         )
 
-        # ── Step 1: Always search Qdrant ───────────────
+        # ── Step 1: Search Qdrant ──────────────────────
         qdrant_sources = self._get_qdrant_sources(
             question=question,
             jurisdiction=jurisdiction,
@@ -129,7 +127,7 @@ class LegalRAGPipeline:
             f"Qdrant results: {len(qdrant_sources)}"
         )
 
-        # ── Step 2: Always search web ──────────────────
+        # ── Step 2: Web search ─────────────────────────
         web_sources = self._get_web_sources(
             question=question,
             jurisdiction=jurisdiction,
@@ -146,10 +144,11 @@ class LegalRAGPipeline:
             web_sources=web_sources,
             jurisdiction=jurisdiction,
             topic=topic,
+            chat_history=chat_history,
         )
 
         logger.info(
-            f"Prompt built: {len(prompt)} chars | "
+            f"Prompt: {len(prompt)} chars | "
             f"Qdrant={len(qdrant_sources)} "
             f"Web={len(web_sources)}"
         )
@@ -158,16 +157,16 @@ class LegalRAGPipeline:
         try:
             answer = self.llm.generate(
                 prompt=prompt,
-                temperature=0.15
+                temperature=0.1
             )
-            logger.info("Answer generated successfully")
+            logger.info("Answer generated")
         except Exception as e:
             logger.error(f"LLM error: {e}")
             return self._error_response(
                 f"AI error: {e}", jurisdiction, topic
             )
 
-        # ── Step 5: Determine source label ─────────────
+        # ── Step 5: Source label ───────────────────────
         if qdrant_sources and web_sources:
             answer_source = "all_sources"
         elif qdrant_sources:
@@ -177,15 +176,12 @@ class LegalRAGPipeline:
         else:
             answer_source = "llm_knowledge"
 
-        # ── Step 6: Combine sources for display ────────
+        # ── Step 6: Combine display sources ───────────
         all_display_sources = list(qdrant_sources)
-
         for ws in web_sources[:2]:
             all_display_sources.append({
                 "text": ws.get("content", "")[:300],
-                "law_name": ws.get(
-                    "title", "Web Result"
-                ),
+                "law_name": ws.get("title", "Web"),
                 "source_url": ws.get("url", ""),
                 "jurisdiction": (
                     jurisdiction or "General"
@@ -202,7 +198,7 @@ class LegalRAGPipeline:
 
         logger.info(
             f"Pipeline DONE: source={answer_source} | "
-            f"display_sources={len(all_display_sources)}"
+            f"sources={len(all_display_sources)}"
         )
 
         return {
@@ -224,7 +220,7 @@ class LegalRAGPipeline:
         }
 
     # ══════════════════════════════════════════════════
-    # TIER 1 - QDRANT SEARCH
+    # TIER 1 - QDRANT
     # ══════════════════════════════════════════════════
     def _get_qdrant_sources(
         self,
@@ -233,10 +229,6 @@ class LegalRAGPipeline:
         topic: Optional[str],
         top_k: int,
     ) -> list:
-        """
-        Search Qdrant with progressive filter relaxation.
-        Always returns whatever is found.
-        """
 
         try:
             # attempt 1: full filters
@@ -247,11 +239,9 @@ class LegalRAGPipeline:
                 top_k=top_k,
             )
 
-            # attempt 2: drop topic filter
+            # attempt 2: drop topic
             if not sources and topic and jurisdiction:
-                logger.info(
-                    "Qdrant: relaxing topic filter"
-                )
+                logger.info("Qdrant: dropping topic filter")
                 sources = self.retriever.retrieve(
                     question=question,
                     jurisdiction=jurisdiction,
@@ -261,9 +251,7 @@ class LegalRAGPipeline:
 
             # attempt 3: no filters
             if not sources and (jurisdiction or topic):
-                logger.info(
-                    "Qdrant: searching without filters"
-                )
+                logger.info("Qdrant: no filters")
                 sources = self.retriever.retrieve(
                     question=question,
                     jurisdiction=None,
@@ -271,7 +259,7 @@ class LegalRAGPipeline:
                     top_k=top_k,
                 )
 
-            # rerank if available
+            # rerank
             if (
                 sources and
                 self.reranker and
@@ -287,7 +275,7 @@ class LegalRAGPipeline:
             return sources or []
 
         except Exception as e:
-            logger.error(f"Qdrant search error: {e}")
+            logger.error(f"Qdrant error: {e}")
             return []
 
     # ══════════════════════════════════════════════════
@@ -299,22 +287,14 @@ class LegalRAGPipeline:
         jurisdiction: Optional[str],
         topic: Optional[str],
     ) -> list:
-        """
-        Search web via Tavily.
-        Always tries even if Qdrant returned results.
-        """
 
         if (
             not self.web_searcher or
             not self.web_searcher.enabled
         ):
-            logger.debug(
-                "Web search skipped: not enabled"
-            )
             return []
 
         try:
-            # focused search first
             results = self.web_searcher.search(
                 question=question,
                 jurisdiction=jurisdiction,
@@ -322,12 +302,7 @@ class LegalRAGPipeline:
                 max_results=3,
             )
 
-            # general search if focused found nothing
             if not results:
-                logger.info(
-                    "Web: focused search empty, "
-                    "trying general search"
-                )
                 results = self.web_searcher.search_general(
                     question=question,
                     max_results=3,
@@ -340,7 +315,7 @@ class LegalRAGPipeline:
             return []
 
     # ══════════════════════════════════════════════════
-    # COMBINED PROMPT BUILDER
+    # COMBINED PROMPT WITH MEMORY
     # ══════════════════════════════════════════════════
     def _build_combined_prompt(
         self,
@@ -349,74 +324,105 @@ class LegalRAGPipeline:
         web_sources: list,
         jurisdiction: Optional[str],
         topic: Optional[str],
+        chat_history: List[Dict] = None,
     ) -> str:
-        """
-        Build precise, anti-hallucination prompt.
-    Forces short answers and honest uncertainty.
-        """
 
         sections = []
 
-        # ── Qdrant documents section ───────────────────
+        # ── Conversation history ───────────────────────
+        if chat_history:
+            sections.append(
+                "=== CONVERSATION HISTORY ==="
+            )
+            # last 6 messages only to save tokens
+            recent = chat_history[-6:]
+            for msg in recent:
+                role = msg.get("role", "")
+                content = str(
+                    msg.get("content", "")
+                )[:200]
+                if role == "user":
+                    sections.append(f"User: {content}")
+                elif role == "assistant":
+                    # only first line of assistant msg
+                    first_line = content.split(
+                        "\n"
+                    )[0][:150]
+                    sections.append(
+                        f"Assistant: {first_line}"
+                    )
+            sections.append("")
+
+        # ── Qdrant documents ───────────────────────────
         if qdrant_sources:
             sections.append(
-                "=== INDEXED LEGAL DOCUMENTS ===\n"
-                "Source: Verified Indian labor law database\n"
+                "=== INDEXED LEGAL DOCUMENTS ==="
             )
-            for i, src in enumerate(qdrant_sources, 1):
+            for i, src in enumerate(
+                qdrant_sources[:3], 1
+            ):
                 sections.append(
-                    f"[Document {i}]\n"
-                    f"Law: {src.get('law_name', 'Unknown')}\n"
-                    f"Jurisdiction: "
-                    f"{src.get('jurisdiction', 'Unknown')}\n"
-                    f"Agency: "
-                    f"{src.get('agency', 'Unknown')}\n"
-                    f"Content:\n{src.get('text', '')}\n"
+                    f"[Doc {i}] "
+                    f"{src.get('law_name','Unknown')} "
+                    f"({src.get('jurisdiction','')}):\n"
+                    f"{src.get('text','')[:350]}"
                 )
         else:
             sections.append(
-                "=== INDEXED DOCUMENTS ===\n"
-                "No matching documents found in our "
-                "Indian legal database for this query.\n"
+                "=== DOCUMENTS ===\n"
+                "No matching Indian law documents found."
             )
 
-        # ── Web search section ─────────────────────────
+        # ── Web results ────────────────────────────────
         if web_sources:
             sections.append(
-                "\n=== LIVE WEB SEARCH RESULTS ===\n"
-                "Source: Internet search (current info)\n"
+                "\n=== WEB SEARCH RESULTS ==="
             )
-            for i, ws in enumerate(web_sources, 1):
+            for i, ws in enumerate(web_sources[:2], 1):
                 sections.append(
-                    f"[Web Result {i}]\n"
-                    f"Title: {ws.get('title', 'Unknown')}\n"
-                    f"URL: {ws.get('url', '')}\n"
-                    f"Content:\n"
-                    f"{ws.get('content', '')[:500]}\n"
+                    f"[Web {i}] "
+                    f"{ws.get('title','')}:\n"
+                    f"{ws.get('content','')[:250]}"
                 )
         else:
             sections.append(
-                "\n=== WEB SEARCH ===\n"
-                "No web results available.\n"
+                "\n=== WEB SEARCH ===\nNo results."
             )
 
-        # ── Main instruction section ───────────────────
+        # ── Strict instructions ───────────────────────
         sections.append(f"""
-=== YOUR INSTRUCTIONS ===
+=== CURRENT QUESTION ===
+{question}
 
-QUESTION: {question}
+=== STRICT OUTPUT FORMAT ===
+You MUST respond in EXACTLY this structure.
+No other format is acceptable.
 
-STRICT RULES FOR YOUR ANSWER:
-1. Answer in 2-3 sentences MAXIMUM
-2. Only state numbers/rates that appear in the documents above
-3. If the exact number is not in documents, say "approximately X" or "check official source for current rate"
-4. Do NOT list bullet points unless asked
-5. Do NOT use headers
-6. Do NOT say "based on the documents provided" - just answer
-7. If about another country, answer briefly from your knowledge
-8. End with the law name and jurisdiction in parentheses
+ANSWER: [1-2 sentences maximum. Direct answer only. No preamble.]
 
-ANSWER (2-3 sentences only):""")
+KEY_DETAILS:
+- [Specific fact with number/date from documents or knowledge]
+- [Second key point if truly important]
+- [Maximum 3 bullets total]
+
+SOURCES_USED:
+- [📄 Document name if used]
+- [🌐 Web source title if used]
+- [🧠 AI knowledge if used for gaps]
+
+LEGAL_BASIS: [Law name • Jurisdiction • Year if known]
+
+=== RULES YOU MUST FOLLOW ===
+1. ANSWER section: 1-2 sentences ONLY, no exceptions
+2. Only state specific numbers that appear in documents above
+3. If number not in documents: write "verify at official source"
+4. If user refers to previous messages: acknowledge it briefly in ANSWER
+5. If about non-Indian law: use your training knowledge, label it [🧠 Knowledge]
+6. Never invent section numbers or rates
+7. Never say "based on the documents provided"
+8. Never use headers inside ANSWER section
+9. Keep TOTAL response under 120 words
+10. Always complete all 4 sections: ANSWER, KEY_DETAILS, SOURCES_USED, LEGAL_BASIS""")
 
         return "\n".join(sections)
 
@@ -429,6 +435,7 @@ ANSWER (2-3 sentences only):""")
         jurisdiction1: str,
         jurisdiction2: str,
         topic: Optional[str] = None,
+        chat_history: List[Dict] = None,
     ) -> Dict:
 
         logger.info(
@@ -440,13 +447,15 @@ ANSWER (2-3 sentences only):""")
             question=question,
             jurisdiction=jurisdiction1,
             topic=topic,
-            top_k=3
+            top_k=3,
+            chat_history=chat_history,
         )
         result2 = self.run(
             question=question,
             jurisdiction=jurisdiction2,
             topic=topic,
-            top_k=3
+            top_k=3,
+            chat_history=chat_history,
         )
 
         return {
